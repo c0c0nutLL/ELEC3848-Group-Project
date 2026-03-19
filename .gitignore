@@ -2,9 +2,13 @@
 *.PDF
 *.docx
 *.DOCX
+*.zip
+*.ZIP
 
 venv/
 .venv/
+_MACOSX/
+car lib/
 
 __pycache__/
 *.pyc
