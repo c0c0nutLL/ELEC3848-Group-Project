@@ -4,11 +4,12 @@
 *.DOCX
 *.zip
 *.ZIP
+*.apk
 
 venv/
 .venv/
 _MACOSX/
-car lib/
+Car_Libs/
 
 __pycache__/
 *.pyc
