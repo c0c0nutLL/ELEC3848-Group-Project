@@ -11,6 +11,7 @@ venv/
 _MACOSX/
 Car_Libs/
 装配/
+reflection/
 
 __pycache__/
 *.pyc
