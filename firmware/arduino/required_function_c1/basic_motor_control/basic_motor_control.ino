@@ -33,7 +33,7 @@
 #define MOTORD_BACKOFF(pwm) do { digitalWrite(DIRD1, HIGH); digitalWrite(DIRD2, LOW);  analogWrite(PWMD, pwm); } while (0)
 #define MOTORD_STOP()       do { digitalWrite(DIRD1, LOW);  digitalWrite(DIRD2, LOW);  analogWrite(PWMD, 0); } while (0)
 
-int motorPwm = 180;
+int motorPwm = 36;
 
 void stopCar() {
   MOTORA_STOP();

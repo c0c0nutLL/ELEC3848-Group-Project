@@ -1,6 +1,10 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+// 这个测试程序用于验证“陀螺仪平行矫正”逻辑。
+// 程序会从 MPU6050 读取角速度，积分得到当前航向角，
+// 然后控制底盘旋转回目标角度，用于测试停车后的平行修正。
+
 // Motor pin mapping copied from Car_Volt_Feedback_24A.ino
 #define PWMA 12
 #define DIRA1 34
@@ -39,6 +43,8 @@ const float GYRO_SCALE_DPS_PER_LSB = 131.0f;  // FS_SEL = 0, +-250 deg/s
 const float HEADING_TOLERANCE_DEG = 1.5f;
 const int ROTATE_PWM = 120;
 
+// headingDeg 表示当前相对零点的航向角。
+// targetHeadingDeg 表示希望矫正回去的目标角度。
 float gyroZBias = 0.0f;
 float headingDeg = 0.0f;
 float targetHeadingDeg = 0.0f;
@@ -85,6 +91,7 @@ void setupMotorPins() {
   pinMode(DIRD2, OUTPUT);
 }
 
+// 向 MPU6050 写寄存器的简单封装。
 void writeMpuRegister(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(reg);
@@ -92,6 +99,7 @@ void writeMpuRegister(uint8_t reg, uint8_t value) {
   Wire.endTransmission();
 }
 
+// 通过 I2C 从 MPU6050 连续读取若干字节。
 bool readMpuBytes(uint8_t startReg, uint8_t count, uint8_t *buffer) {
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(startReg);
@@ -110,6 +118,8 @@ bool readMpuBytes(uint8_t startReg, uint8_t count, uint8_t *buffer) {
   return true;
 }
 
+// 唤醒 MPU6050，并把陀螺仪量程设置为 +-250 deg/s，
+// 这样做小角度修正时分辨率更高。
 bool initMpu6050() {
   Wire.begin();
   writeMpuRegister(0x6B, 0x00);  // wake up
@@ -123,6 +133,7 @@ bool initMpu6050() {
   return whoAmI == 0x68;
 }
 
+// 读取 Z 轴角速度，单位是度每秒。
 float readGyroZDps() {
   uint8_t buffer[2];
   if (!readMpuBytes(0x47, 2, buffer)) {
@@ -133,6 +144,7 @@ float readGyroZDps() {
   return static_cast<float>(rawGyroZ) / GYRO_SCALE_DPS_PER_LSB;
 }
 
+// 在小车静止时估计陀螺仪零偏，减少后续积分漂移。
 void calibrateGyroBias() {
   const int sampleCount = 500;
   float sum = 0.0f;
@@ -153,6 +165,7 @@ void calibrateGyroBias() {
   Serial.println(gyroZBias, 4);
 }
 
+// 对 Z 轴角速度做时间积分，得到当前航向角估计值。
 void updateHeading() {
   unsigned long now = micros();
   if (lastUpdateMicros == 0) {
@@ -167,6 +180,7 @@ void updateHeading() {
   headingDeg += gyroZ * dt;
 }
 
+// 根据当前误差控制底盘左转或右转，直到误差进入容差范围。
 void runCorrection() {
   float errorDeg = targetHeadingDeg - headingDeg;
 
@@ -192,6 +206,7 @@ void printHelp() {
   Serial.println("  H - print heading now");
 }
 
+// 串口命令用于测试时手动触发校准、清零、记录目标角和启动修正。
 void handleCommand(char cmd) {
   switch (cmd) {
     case 'C':
@@ -248,6 +263,7 @@ void setup() {
 }
 
 void loop() {
+  // 即使当前没有启动修正，也持续更新航向角估计。
   updateHeading();
 
   if (Serial.available() > 0) {
