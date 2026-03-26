@@ -42,6 +42,10 @@ const uint8_t ULTRASONIC_RIGHT_TRIG_PIN = 6;
 const uint8_t ULTRASONIC_RIGHT_ECHO_PIN = 4;
 const uint8_t ULTRASONIC_LEFT_TRIG_PIN = 10;
 const uint8_t ULTRASONIC_LEFT_ECHO_PIN = 7;
+const uint8_t SIDE_ULTRASONIC_LEFT_TRIG_PIN = 28;
+const uint8_t SIDE_ULTRASONIC_LEFT_ECHO_PIN = 25;
+const uint8_t SIDE_ULTRASONIC_RIGHT_TRIG_PIN = 30;
+const uint8_t SIDE_ULTRASONIC_RIGHT_ECHO_PIN = 32;
 const uint8_t START_BUTTON_PIN = 33;
 
 const uint8_t COLOR_OUT_PIN = 46;
@@ -55,7 +59,7 @@ const uint8_t MPU6050_ADDR = 0x68;
 
 const uint8_t SCREEN_WIDTH = 128;
 const uint8_t SCREEN_HEIGHT = 32;
-const int8_t OLED_RESET = 28;
+const int8_t OLED_RESET = -1;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 bool oledReady = false;
 
@@ -67,10 +71,12 @@ const unsigned long ULTRASONIC_TIMEOUT_US = 30000UL;
 const unsigned long HEADING_SAMPLE_INTERVAL_MS = 8UL;
 const unsigned long SETTLE_TIME_MS = 180UL;
 const unsigned long ALIGN_STABLE_MS = 160UL;
+const unsigned long ALIGN_DIRECTION_HOLD_MS = 120UL;
 const unsigned long TURN_STABLE_MS = 180UL;
 const unsigned long COLOR_CONFIRM_TIME_MS = 2000UL;
 const unsigned long COLOR_SEARCH_LEFT_MS = 4000UL;
 const unsigned long COLOR_SEARCH_RIGHT_MS = 7000UL;
+const unsigned long RIGHT_SEARCH_ALIGN_INTERVAL_MS = 2000UL;
 const unsigned long TURN_TIMEOUT_MS = 6000UL;
 
 const float FIRST_TARGET_CM = 27.0f;
@@ -87,6 +93,15 @@ const float SECOND_RECOVER_HIGH_CM = 10.0f;
 const float SECOND_SLOW_START_CM = 20.0f;
 const float SECOND_CRAWL_START_CM = 12.0f;
 const float FINAL_HARD_STOP_CM = 6.0f;
+const float SIDE_SEARCH_DIRECTION_TOLERANCE_CM = 1.0f;
+const float LEFT_TURN_SIDE_TARGET_CM = 19.0f;
+const float LEFT_TURN_SIDE_TOLERANCE_CM = 0.7f;
+const float RIGHT_TURN_SIDE_TARGET_CM = 21.0f;
+const float RIGHT_TURN_SIDE_TOLERANCE_CM = 1.0f;
+const float APPROACH_SIDE_ESCAPE_TRIGGER_CM = 7.0f;
+const float APPROACH_SIDE_ESCAPE_TURN_DEG = 15.0f;
+const float APPROACH_SIDE_ESCAPE_TURN_TOLERANCE_DEG = 2.0f;
+const float FINAL_DISTANCE_CHECK_TOLERANCE_CM = 0.6f;
 
 const float ALIGN_TOLERANCE_CM = 1.4f;
 const float FINAL_ALIGN_TOLERANCE_CM = 1.0f;
@@ -102,24 +117,33 @@ const int FORWARD_PWM_CRAWL = 27;
 const int FINAL_FORWARD_PWM_FAST = 32;
 const int FINAL_FORWARD_PWM_SLOW = 27;
 const int FINAL_FORWARD_PWM_CRAWL = 23;
-const int STRAFE_PWM = 29;
-const int RIGHT_STRAFE_PWM = 33;
+const int STRAFE_PWM = 35;
+const int RIGHT_STRAFE_PWM = 40;
 const int RECOVERY_PWM = 24;
 const int ALIGN_PWM_FAST = 31;
 const int ALIGN_PWM_SLOW = 27;
+const int ALIGN_PWM_FINE = 22;
+const int SIDE_ADJUST_PWM_FAST = 32;
+const int SIDE_ADJUST_PWM_SLOW = 26;
 const int TURN_PWM_FAST = 35;
 const int TURN_PWM_SLOW = 28;
 const int RIGHT_TURN_PWM_FAST = 32;
 const int RIGHT_TURN_PWM_SLOW = 25;
 const int HEADING_CORRECT_PWM = 25;
 const int RIGHT_STRAFE_HEADING_PWM = 20;
-const int POSTTURN_BIAS_PWM = 31;
+const int POSTTURN_BIAS_PWM = 37;
+const float STRAFE_LEFT_RF_TRIM = 1.05f;
+const float STRAFE_RIGHT_RF_TRIM = 1.10f;
+const float STRAFE_RIGHT_LR_TRIM = 1.10f;
 const float LEFT_SIDE_TRIM = 1.10f;
 const float FIRST_STAGE_LEFT_SIDE_TRIM = 1.20f;
 const float LEFT_AFTER_TURN_TRIM = 1.25f;
 const int PRETURN_FORWARD_PWM = 31;
 const unsigned long PRETURN_FORWARD_MS = 400UL;
 const unsigned long POSTTURN_BIAS_MS = 180UL;
+const unsigned long APPROACH_SIDE_ESCAPE_STRAFE_MS = 220UL;
+const unsigned long APPROACH_SIDE_ESCAPE_COOLDOWN_MS = 500UL;
+const unsigned long APPROACH_SIDE_ESCAPE_TURN_TIMEOUT_MS = 1600UL;
 
 const uint16_t RED_GREEN_GAP_FOR_RED = 12;
 const uint16_t RED_GREEN_GAP_FOR_GREEN = 3;
@@ -151,7 +175,10 @@ enum RoutineState {
   STATE_TURN_90,
   STATE_POSTTURN_BIAS,
   STATE_APPROACH_9,
+  STATE_APPROACH_9_ESCAPE_STRAFE,
+  STATE_APPROACH_9_ESCAPE_TURN,
   STATE_APPROACH_9_SETTLE,
+  STATE_SIDE_POSITION_ADJUST,
   STATE_FINAL_ALIGN,
   STATE_DONE,
   STATE_FAULT
@@ -194,6 +221,8 @@ struct OledCache {
   DetectedColor shownColor;
   int rightTenths;
   int leftTenths;
+  int sideRightTenths;
+  int sideLeftTenths;
   int averageTenths;
   int diffTenths;
   int headingTenths;
@@ -240,16 +269,23 @@ unsigned long conditionStartMs = 0;
 unsigned long lastTelemetryMs = 0;
 unsigned long lastOledMs = 0;
 unsigned long lastDistanceSampleMs = 0;
+unsigned long lastSideDistanceSampleMs = 0;
 unsigned long lastColorSampleMs = 0;
 unsigned long lastHeadingUpdateUs = 0;
 unsigned long lastHeadingSampleMs = 0;
 
 bool lastButtonPressed = false;
 uint8_t invalidDistanceCount = 0;
+uint8_t invalidSideDistanceCount = 0;
+int8_t alignTurnDirection = 0;
+unsigned long alignTurnDirectionMs = 0;
 
 DistancePair latestDistances = {-1.0f, -1.0f};
 float latestAverageCm = -1.0f;
 float latestDiffCm = 0.0f;
+DistancePair latestSideDistances = {-1.0f, -1.0f};
+float latestSideAverageCm = -1.0f;
+float latestSideDiffCm = 0.0f;
 
 ColorReading latestColorReading = {0, 0, 0};
 DetectedColor latestRawColor = COLOR_UNKNOWN;
@@ -262,6 +298,9 @@ uint16_t confirmGreenCount = 0;
 uint16_t confirmUnknownCount = 0;
 bool colorSearchRightPhase = false;
 float colorSearchAlignedHeadingDeg = 0.0f;
+unsigned long rightSearchStartedMs = 0;
+unsigned long rightSearchLastAlignMs = 0;
+unsigned long lastApproachAvoidMs = 0;
 
 float gyroZBias = 0.0f;
 float headingDeg = 0.0f;
@@ -271,7 +310,7 @@ float latestGyroZDps = 0.0f;
 bool mpuReady = false;
 uint8_t gyroReadFailCount = 0;
 
-OledCache oledCache = {false, STATE_IDLE, false, COLOR_UNKNOWN, -32768, -32768, -32768, -32768, -32768, ""};
+OledCache oledCache = {false, STATE_IDLE, false, COLOR_UNKNOWN, -32768, -32768, -32768, -32768, -32768, -32768, -32768, ""};
 
 const char *faultMessage = "";
 
@@ -287,6 +326,10 @@ int applyLeftTrim(int pwm) {
 }
 
 int applyCustomLeftTrim(int pwm, float trim) {
+  return constrain(static_cast<int>(pwm * trim), 0, 255);
+}
+
+int applyWheelTrim(int pwm, float trim) {
   return constrain(static_cast<int>(pwm * trim), 0, 255);
 }
 
@@ -335,16 +378,19 @@ void moveBackward(int pwm) {
 }
 
 void strafeLeft(int pwm) {
+  int rightFrontPwm = applyWheelTrim(pwm, STRAFE_LEFT_RF_TRIM);
   MOTORA_BACKOFF(pwm);
-  MOTORB_BACKOFF(pwm);
+  MOTORB_BACKOFF(rightFrontPwm);
   MOTORC_FORWARD(pwm);
   MOTORD_FORWARD(pwm);
 }
 
 void strafeRight(int pwm) {
+  int rightFrontPwm = applyWheelTrim(pwm, STRAFE_RIGHT_RF_TRIM);
+  int leftRearPwm = applyWheelTrim(pwm, STRAFE_RIGHT_LR_TRIM);
   MOTORA_FORWARD(pwm);
-  MOTORB_FORWARD(pwm);
-  MOTORC_BACKOFF(pwm);
+  MOTORB_FORWARD(rightFrontPwm);
+  MOTORC_BACKOFF(leftRearPwm);
   MOTORD_BACKOFF(pwm);
 }
 
@@ -385,9 +431,15 @@ void setupUltrasonics() {
   pinMode(ULTRASONIC_RIGHT_ECHO_PIN, INPUT);
   pinMode(ULTRASONIC_LEFT_TRIG_PIN, OUTPUT);
   pinMode(ULTRASONIC_LEFT_ECHO_PIN, INPUT);
+  pinMode(SIDE_ULTRASONIC_LEFT_TRIG_PIN, OUTPUT);
+  pinMode(SIDE_ULTRASONIC_LEFT_ECHO_PIN, INPUT);
+  pinMode(SIDE_ULTRASONIC_RIGHT_TRIG_PIN, OUTPUT);
+  pinMode(SIDE_ULTRASONIC_RIGHT_ECHO_PIN, INPUT);
 
   digitalWrite(ULTRASONIC_RIGHT_TRIG_PIN, LOW);
   digitalWrite(ULTRASONIC_LEFT_TRIG_PIN, LOW);
+  digitalWrite(SIDE_ULTRASONIC_LEFT_TRIG_PIN, LOW);
+  digitalWrite(SIDE_ULTRASONIC_RIGHT_TRIG_PIN, LOW);
 }
 
 void setupButton() {
@@ -574,6 +626,14 @@ DistancePair readDistances() {
   return pair;
 }
 
+DistancePair readSideDistances() {
+  DistancePair pair;
+  pair.rightCm = readDistanceCm(SIDE_ULTRASONIC_RIGHT_TRIG_PIN, SIDE_ULTRASONIC_RIGHT_ECHO_PIN);
+  delay(4);
+  pair.leftCm = readDistanceCm(SIDE_ULTRASONIC_LEFT_TRIG_PIN, SIDE_ULTRASONIC_LEFT_ECHO_PIN);
+  return pair;
+}
+
 void updateDistanceSnapshot() {
   if (!stateNeedsDistanceSampling(currentState)) {
     return;
@@ -595,6 +655,31 @@ void updateDistanceSnapshot() {
     latestDiffCm = 0.0f;
     if (invalidDistanceCount < 255) {
       invalidDistanceCount++;
+    }
+  }
+}
+
+void updateSideDistanceSnapshot() {
+  if (!stateNeedsSideDistanceSampling(currentState)) {
+    return;
+  }
+
+  if (millis() - lastSideDistanceSampleMs < DISTANCE_SAMPLE_INTERVAL_MS) {
+    return;
+  }
+
+  lastSideDistanceSampleMs = millis();
+  latestSideDistances = readSideDistances();
+
+  if (latestSideDistances.rightCm >= 0.0f && latestSideDistances.leftCm >= 0.0f) {
+    latestSideAverageCm = (latestSideDistances.rightCm + latestSideDistances.leftCm) * 0.5f;
+    latestSideDiffCm = latestSideDistances.rightCm - latestSideDistances.leftCm;
+    invalidSideDistanceCount = 0;
+  } else {
+    latestSideAverageCm = -1.0f;
+    latestSideDiffCm = 0.0f;
+    if (invalidSideDistanceCount < 255) {
+      invalidSideDistanceCount++;
     }
   }
 }
@@ -679,12 +764,22 @@ bool stateNeedsHeadingUpdate(RoutineState state) {
          state == STATE_RECENTER_FOR_RIGHT_SEARCH ||
          state == STATE_PRETURN_ADJUST ||
          state == STATE_TURN_90 ||
+         state == STATE_APPROACH_9_ESCAPE_TURN ||
          state == STATE_APPROACH_9 ||
          (state == STATE_STRAFE_TO_COLOR && colorSearchRightPhase);
 }
 
 bool stateNeedsDistanceSampling(RoutineState state) {
   return state != STATE_TURN_90;
+}
+
+bool stateNeedsSideDistanceSampling(RoutineState state) {
+  return state == STATE_STRAFE_TO_COLOR ||
+         state == STATE_RECENTER_FOR_RIGHT_SEARCH ||
+         state == STATE_APPROACH_9 ||
+         state == STATE_APPROACH_9_ESCAPE_STRAFE ||
+         state == STATE_SIDE_POSITION_ADJUST ||
+         state == STATE_DONE;
 }
 
 void updateColorSnapshot() {
@@ -728,7 +823,10 @@ const char *stateName(RoutineState state) {
     case STATE_TURN_90: return "TURN";
     case STATE_POSTTURN_BIAS: return "SHIFT";
     case STATE_APPROACH_9: return "TO9";
+    case STATE_APPROACH_9_ESCAPE_STRAFE: return "AVDS";
+    case STATE_APPROACH_9_ESCAPE_TURN: return "AVDT";
     case STATE_APPROACH_9_SETTLE: return "CHK9";
+    case STATE_SIDE_POSITION_ADJUST: return "SIDE";
     case STATE_FINAL_ALIGN: return "ALGN2";
     case STATE_DONE: return "DONE";
     case STATE_FAULT: return "FAULT";
@@ -751,6 +849,9 @@ void primeSamplingForState(RoutineState state) {
   if (stateNeedsDistanceSampling(state)) {
     lastDistanceSampleMs = 0;
   }
+  if (stateNeedsSideDistanceSampling(state)) {
+    lastSideDistanceSampleMs = 0;
+  }
   if (stateNeedsColorSampling(state)) {
     lastColorSampleMs = 0;
   }
@@ -763,9 +864,11 @@ void primeSamplingForState(RoutineState state) {
 
 void onEnterState(RoutineState newState) {
   if (newState == STATE_STRAFE_TO_COLOR) {
-    if (!colorSearchRightPhase) {
+    if (rightSearchLastAlignMs == 0) {
       colorSearchAlignedHeadingDeg = headingDeg;
     }
+    rightSearchStartedMs = millis();
+    rightSearchLastAlignMs = millis();
     selectedColor = COLOR_UNKNOWN;
     resetColorTracking();
   }
@@ -777,6 +880,8 @@ void setState(RoutineState newState) {
   currentState = newState;
   stateStartMs = millis();
   conditionStartMs = 0;
+  alignTurnDirection = 0;
+  alignTurnDirectionMs = 0;
   onEnterState(newState);
 
   Serial.print("State -> ");
@@ -805,9 +910,14 @@ void beginRun() {
   selectedColor = COLOR_UNKNOWN;
   faultMessage = "";
   invalidDistanceCount = 0;
+  invalidSideDistanceCount = 0;
   colorSearchRightPhase = false;
   colorSearchAlignedHeadingDeg = 0.0f;
+  rightSearchStartedMs = 0;
+  rightSearchLastAlignMs = 0;
+  lastApproachAvoidMs = 0;
   lastDistanceSampleMs = 0;
+  lastSideDistanceSampleMs = 0;
   lastColorSampleMs = 0;
   lastHeadingSampleMs = 0;
   gyroReadFailCount = 0;
@@ -866,18 +976,69 @@ bool ensureValidDistance(const char *faultText) {
   return false;
 }
 
+bool ensureValidSideDistance(const char *faultText) {
+  if (latestSideAverageCm >= 0.0f) {
+    return true;
+  }
+
+  if (invalidSideDistanceCount >= 3) {
+    enterFault(faultText);
+  }
+  return false;
+}
+
+int8_t chooseSearchStrafeDirection() {
+  float sideDelta = latestSideDistances.rightCm - latestSideDistances.leftCm;
+  if (fabs(sideDelta) <= SIDE_SEARCH_DIRECTION_TOLERANCE_CM) {
+    return colorSearchRightPhase ? 1 : -1;
+  }
+  return sideDelta > 0.0f ? 1 : -1;
+}
+
+float targetSideDistanceCm() {
+  return selectedColor == COLOR_GREEN ? latestSideDistances.rightCm : latestSideDistances.leftCm;
+}
+
+float targetSideGoalCm() {
+  return selectedColor == COLOR_GREEN ? LEFT_TURN_SIDE_TARGET_CM : RIGHT_TURN_SIDE_TARGET_CM;
+}
+
+float targetSideToleranceCm() {
+  return selectedColor == COLOR_GREEN ? LEFT_TURN_SIDE_TOLERANCE_CM : RIGHT_TURN_SIDE_TOLERANCE_CM;
+}
+
 int alignmentPwm(float absDiff) {
-  return absDiff > 4.0f ? ALIGN_PWM_FAST : ALIGN_PWM_SLOW;
+  if (absDiff > 4.0f) {
+    return ALIGN_PWM_FAST;
+  }
+  if (absDiff > 2.0f) {
+    return ALIGN_PWM_SLOW;
+  }
+  return ALIGN_PWM_FINE;
 }
 
 bool correctUltrasonicDiff(float toleranceCm) {
   float absDiff = fabs(latestDiffCm);
   if (absDiff <= toleranceCm) {
+    alignTurnDirection = 0;
+    alignTurnDirectionMs = 0;
     return true;
   }
 
+  int8_t requestedDirection = latestDiffCm > 0.0f ? 1 : -1;
+  unsigned long nowMs = millis();
+  if (alignTurnDirection != 0 &&
+      requestedDirection != alignTurnDirection &&
+      nowMs - alignTurnDirectionMs < ALIGN_DIRECTION_HOLD_MS) {
+    requestedDirection = alignTurnDirection;
+  }
+  if (requestedDirection != alignTurnDirection) {
+    alignTurnDirection = requestedDirection;
+    alignTurnDirectionMs = nowMs;
+  }
+
   int pwm = alignmentPwm(absDiff);
-  if (latestDiffCm > 0.0f) {
+  if (requestedDirection > 0) {
     rotateLeft(pwm);
   } else {
     rotateRight(pwm);
@@ -913,6 +1074,18 @@ bool correctDistanceBand(const RecoveryProfile &profile) {
   return true;
 }
 
+bool finalAverageReady() {
+  return fabs(latestAverageCm - SECOND_TARGET_CM) <= FINAL_DISTANCE_CHECK_TOLERANCE_CM;
+}
+
+bool finalAlignmentReady() {
+  return fabs(latestDiffCm) <= FINAL_ALIGN_TOLERANCE_CM;
+}
+
+bool finalSideReady() {
+  return fabs(targetSideDistanceCm() - targetSideGoalCm()) <= targetSideToleranceCm();
+}
+
 void runUltrasonicAlign(float toleranceCm, RoutineState nextState) {
   if (!ensureValidDistance("Ultrasonic timeout during align")) {
     return;
@@ -927,6 +1100,58 @@ void runUltrasonicAlign(float toleranceCm, RoutineState nextState) {
   if (waitForStable(true, ALIGN_STABLE_MS)) {
     setState(nextState);
   }
+}
+
+void runFinalAlign() {
+  if (!ensureValidDistance("Ultrasonic timeout during final align")) {
+    return;
+  }
+
+  if (!finalAverageReady()) {
+    waitForStable(false, ALIGN_STABLE_MS);
+    if (latestAverageCm < SECOND_TARGET_CM - FINAL_DISTANCE_CHECK_TOLERANCE_CM) {
+      moveBackward(RECOVERY_PWM);
+    } else {
+      moveForwardByMode(FINAL_FORWARD_PWM_CRAWL, FORWARD_TRIM_AFTER_TURN);
+    }
+    return;
+  }
+
+  if (!correctUltrasonicDiff(FINAL_ALIGN_TOLERANCE_CM)) {
+    waitForStable(false, ALIGN_STABLE_MS);
+    return;
+  }
+
+  stopCar();
+  if (waitForStable(true, ALIGN_STABLE_MS)) {
+    setState(STATE_DONE);
+  }
+}
+
+void runDoneValidation() {
+  if (!ensureValidDistance("Ultrasonic timeout during final validation")) {
+    return;
+  }
+  if (!ensureValidSideDistance("Side ultrasonic timeout during final validation")) {
+    return;
+  }
+
+  if (!finalSideReady()) {
+    setState(STATE_SIDE_POSITION_ADJUST);
+    return;
+  }
+
+  if (!finalAverageReady()) {
+    setState(STATE_APPROACH_9_SETTLE);
+    return;
+  }
+
+  if (!finalAlignmentReady()) {
+    setState(STATE_FINAL_ALIGN);
+    return;
+  }
+
+  stopCar();
 }
 
 void runPreTurnAdjust() {
@@ -951,17 +1176,6 @@ void runRecenterForRightSearch() {
     return;
   }
 
-  if (!correctHeading(colorSearchAlignedHeadingDeg, HEADING_HOLD_TOLERANCE_DEG,
-                      HEADING_CORRECT_PWM, HEADING_CORRECT_PWM)) {
-    waitForStable(false, ALIGN_STABLE_MS);
-    return;
-  }
-
-  if (!correctUltrasonicDiff(ALIGN_TOLERANCE_CM)) {
-    waitForStable(false, ALIGN_STABLE_MS);
-    return;
-  }
-
   RecoveryProfile recenterProfile = {
     FIRST_TARGET_CM - PRETURN_DISTANCE_TOLERANCE_CM,
     FIRST_TARGET_CM + PRETURN_DISTANCE_TOLERANCE_CM,
@@ -974,9 +1188,19 @@ void runRecenterForRightSearch() {
     return;
   }
 
+  if (!correctUltrasonicDiff(ALIGN_TOLERANCE_CM)) {
+    waitForStable(false, ALIGN_STABLE_MS);
+    return;
+  }
+
+  if (!correctHeading(colorSearchAlignedHeadingDeg, HEADING_HOLD_TOLERANCE_DEG,
+                      HEADING_CORRECT_PWM, HEADING_CORRECT_PWM)) {
+    waitForStable(false, ALIGN_STABLE_MS);
+    return;
+  }
+
   stopCar();
   if (waitForStable(true, ALIGN_STABLE_MS)) {
-    colorSearchRightPhase = true;
     setState(STATE_STRAFE_TO_COLOR);
   }
 }
@@ -1035,23 +1259,7 @@ void runApproach25Settle() {
 }
 
 void runStrafeToColor() {
-  unsigned long elapsedMs = millis() - stateStartMs;
-  if (!colorSearchRightPhase) {
-    if (elapsedMs < COLOR_SEARCH_LEFT_MS) {
-      strafeLeft(STRAFE_PWM);
-    } else {
-      stopCar();
-      setState(STATE_RECENTER_FOR_RIGHT_SEARCH);
-      return;
-    }
-  } else if (elapsedMs < COLOR_SEARCH_RIGHT_MS) {
-    if (!correctHeading(colorSearchAlignedHeadingDeg, HEADING_HOLD_TOLERANCE_DEG,
-                        RIGHT_STRAFE_HEADING_PWM, RIGHT_STRAFE_HEADING_PWM)) {
-      return;
-    }
-    strafeRight(RIGHT_STRAFE_PWM);
-  } else {
-    enterFault("Color search timeout");
+  if (!ensureValidSideDistance("Side ultrasonic timeout during color search")) {
     return;
   }
 
@@ -1062,6 +1270,22 @@ void runStrafeToColor() {
     confirmGreenCount = 0;
     confirmUnknownCount = 0;
     setState(STATE_COLOR_CONFIRM);
+    return;
+  }
+
+  if (millis() - rightSearchLastAlignMs >= RIGHT_SEARCH_ALIGN_INTERVAL_MS) {
+    stopCar();
+    setState(STATE_RECENTER_FOR_RIGHT_SEARCH);
+    return;
+  }
+
+  int8_t direction = chooseSearchStrafeDirection();
+  colorSearchRightPhase = direction > 0;
+
+  if (direction > 0) {
+    strafeRight(RIGHT_STRAFE_PWM);
+  } else {
+    strafeLeft(STRAFE_PWM);
   }
 }
 
@@ -1132,13 +1356,72 @@ void runPostTurnBias() {
   setState(STATE_APPROACH_9);
 }
 
+void runApproach9AvoidStrafe() {
+  if (millis() - stateStartMs < APPROACH_SIDE_ESCAPE_STRAFE_MS) {
+    if (selectedColor == COLOR_GREEN) {
+      strafeLeft(STRAFE_PWM);
+    } else {
+      strafeRight(RIGHT_STRAFE_PWM);
+    }
+    return;
+  }
+
+  stopCar();
+  setState(STATE_APPROACH_9_ESCAPE_TURN);
+}
+
+void runApproach9AvoidTurn() {
+  if (millis() - stateStartMs >= APPROACH_SIDE_ESCAPE_TURN_TIMEOUT_MS) {
+    enterFault("Final approach avoid turn timeout");
+    return;
+  }
+
+  float errorDeg = angleErrorDeg(turnTargetHeadingDeg, headingDeg);
+  float absError = fabs(errorDeg);
+
+  if (absError <= APPROACH_SIDE_ESCAPE_TURN_TOLERANCE_DEG) {
+    stopCar();
+    if (waitForStable(true, TURN_STABLE_MS)) {
+      referenceHeadingDeg = headingDeg;
+      lastApproachAvoidMs = millis();
+      setState(STATE_APPROACH_9);
+    }
+    return;
+  }
+
+  waitForStable(false, TURN_STABLE_MS);
+  int pwm = errorDeg > 0.0f
+              ? (absError > 8.0f ? TURN_PWM_FAST : TURN_PWM_SLOW)
+              : (absError > 8.0f ? RIGHT_TURN_PWM_FAST : RIGHT_TURN_PWM_SLOW);
+  if (errorDeg > 0.0f) {
+    rotateLeft(pwm);
+  } else {
+    rotateRight(pwm);
+  }
+}
+
 void runApproach9() {
   if (!ensureValidDistance("Ultrasonic timeout before 9 cm")) {
+    return;
+  }
+  if (!ensureValidSideDistance("Side ultrasonic timeout during final approach")) {
     return;
   }
 
   if (latestAverageCm <= FINAL_HARD_STOP_CM) {
     enterFault("Too close to wall");
+    return;
+  }
+
+  float monitoredSideCm = targetSideDistanceCm();
+  if (monitoredSideCm > 0.0f &&
+      monitoredSideCm < APPROACH_SIDE_ESCAPE_TRIGGER_CM &&
+      millis() - lastApproachAvoidMs >= APPROACH_SIDE_ESCAPE_COOLDOWN_MS) {
+    stopCar();
+    turnTargetHeadingDeg = headingDeg +
+                           (selectedColor == COLOR_GREEN ? APPROACH_SIDE_ESCAPE_TURN_DEG
+                                                         : -APPROACH_SIDE_ESCAPE_TURN_DEG);
+    setState(STATE_APPROACH_9_ESCAPE_STRAFE);
     return;
   }
 
@@ -1176,7 +1459,44 @@ void runApproach9Settle() {
   }
 
   stopCar();
-  setState(STATE_FINAL_ALIGN);
+  setState(STATE_SIDE_POSITION_ADJUST);
+}
+
+void runSidePositionAdjust() {
+  if (!ensureValidSideDistance("Side ultrasonic timeout at final side adjust")) {
+    return;
+  }
+
+  float measuredSideCm = targetSideDistanceCm();
+  float targetCm = targetSideGoalCm();
+  float toleranceCm = targetSideToleranceCm();
+  float sideErrorCm = measuredSideCm - targetCm;
+  float absErrorCm = fabs(sideErrorCm);
+
+  if (absErrorCm <= toleranceCm) {
+    stopCar();
+    if (waitForStable(true, ALIGN_STABLE_MS)) {
+      setState(STATE_FINAL_ALIGN);
+    }
+    return;
+  }
+
+  waitForStable(false, ALIGN_STABLE_MS);
+  int pwm = absErrorCm > 4.0f ? SIDE_ADJUST_PWM_FAST : SIDE_ADJUST_PWM_SLOW;
+
+  if (selectedColor == COLOR_GREEN) {
+    if (sideErrorCm > 0.0f) {
+      strafeRight(pwm);
+    } else {
+      strafeLeft(pwm);
+    }
+  } else {
+    if (sideErrorCm > 0.0f) {
+      strafeLeft(pwm);
+    } else {
+      strafeRight(pwm);
+    }
+  }
 }
 
 void runStateMachine() {
@@ -1237,16 +1557,28 @@ void runStateMachine() {
       runApproach9();
       break;
 
+    case STATE_APPROACH_9_ESCAPE_STRAFE:
+      runApproach9AvoidStrafe();
+      break;
+
+    case STATE_APPROACH_9_ESCAPE_TURN:
+      runApproach9AvoidTurn();
+      break;
+
     case STATE_APPROACH_9_SETTLE:
       runApproach9Settle();
       break;
 
+    case STATE_SIDE_POSITION_ADJUST:
+      runSidePositionAdjust();
+      break;
+
     case STATE_FINAL_ALIGN:
-      runUltrasonicAlign(FINAL_ALIGN_TOLERANCE_CM, STATE_DONE);
+      runFinalAlign();
       break;
 
     case STATE_DONE:
-      stopCar();
+      runDoneValidation();
       break;
 
     case STATE_FAULT:
@@ -1270,6 +1602,8 @@ bool oledFrameChanged() {
          oledCache.shownColor != displayedColor() ||
          oledCache.rightTenths != oledTenths(latestDistances.rightCm) ||
          oledCache.leftTenths != oledTenths(latestDistances.leftCm) ||
+         oledCache.sideRightTenths != oledTenths(latestSideDistances.rightCm) ||
+         oledCache.sideLeftTenths != oledTenths(latestSideDistances.leftCm) ||
          oledCache.averageTenths != oledTenths(latestAverageCm) ||
          oledCache.diffTenths != oledTenths(latestDiffCm) ||
          oledCache.headingTenths != oledTenths(headingDeg) ||
@@ -1283,6 +1617,8 @@ void updateOledCache() {
   oledCache.shownColor = displayedColor();
   oledCache.rightTenths = oledTenths(latestDistances.rightCm);
   oledCache.leftTenths = oledTenths(latestDistances.leftCm);
+  oledCache.sideRightTenths = oledTenths(latestSideDistances.rightCm);
+  oledCache.sideLeftTenths = oledTenths(latestSideDistances.leftCm);
   oledCache.averageTenths = oledTenths(latestAverageCm);
   oledCache.diffTenths = oledTenths(latestDiffCm);
   oledCache.headingTenths = oledTenths(headingDeg);
@@ -1315,10 +1651,17 @@ void updateOled() {
   if (currentState == STATE_FAULT) {
     display.println("FAULT");
     display.println(faultMessage);
+    display.print("F ");
     display.print("R:");
     printFloatOrDash(latestDistances.rightCm);
     display.print(" L:");
     printFloatOrDash(latestDistances.leftCm);
+    display.println();
+    display.print("S ");
+    display.print("R:");
+    printFloatOrDash(latestSideDistances.rightCm);
+    display.print(" L:");
+    printFloatOrDash(latestSideDistances.leftCm);
     display.display();
     updateOledCache();
     return;
@@ -1328,18 +1671,25 @@ void updateOled() {
   display.print(" C:");
   display.println(colorName(displayedColor()));
 
+  display.print("F ");
   display.print("R:");
   printFloatOrDash(latestDistances.rightCm);
   display.print(" L:");
   printFloatOrDash(latestDistances.leftCm);
   display.println();
 
+  display.print("S ");
+  display.print("R:");
+  printFloatOrDash(latestSideDistances.rightCm);
+  display.print(" L:");
+  printFloatOrDash(latestSideDistances.leftCm);
+  display.println();
+
   display.print("A:");
   printFloatOrDash(latestAverageCm);
   display.print(" D:");
-  display.println(latestDiffCm, 1);
-
-  display.print("H:");
+  display.print(latestDiffCm, 1);
+  display.print(" H:");
   display.print(headingDeg, 1);
   display.display();
   updateOledCache();
@@ -1364,6 +1714,14 @@ void printTelemetry() {
   Serial.print(latestAverageCm, 1);
   Serial.print(" diff=");
   Serial.print(latestDiffCm, 1);
+  Serial.print(" sideRight=");
+  Serial.print(latestSideDistances.rightCm, 1);
+  Serial.print(" sideLeft=");
+  Serial.print(latestSideDistances.leftCm, 1);
+  Serial.print(" sideAvg=");
+  Serial.print(latestSideAverageCm, 1);
+  Serial.print(" sideDiff=");
+  Serial.print(latestSideDiffCm, 1);
   Serial.print(" heading=");
   Serial.print(headingDeg, 1);
   Serial.print(" gyroZ=");
@@ -1457,6 +1815,7 @@ void loop() {
     updateHeading();
   }
   updateDistanceSnapshot();
+  updateSideDistanceSnapshot();
   updateColorSnapshot();
 
   bool buttonPressed = isStartButtonPressed();

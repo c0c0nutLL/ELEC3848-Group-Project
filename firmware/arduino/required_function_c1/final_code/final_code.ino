@@ -69,7 +69,7 @@ const unsigned long SETTLE_TIME_MS = 180UL;
 const unsigned long ALIGN_STABLE_MS = 160UL;
 const unsigned long TURN_STABLE_MS = 180UL;
 const unsigned long COLOR_CONFIRM_TIME_MS = 2000UL;
-const unsigned long COLOR_SEARCH_LEFT_MS = 4000UL;
+const unsigned long COLOR_SEARCH_LEFT_MS = 3000UL;
 const unsigned long COLOR_SEARCH_RIGHT_MS = 7000UL;
 const unsigned long TURN_TIMEOUT_MS = 6000UL;
 
@@ -113,9 +113,12 @@ const int RIGHT_TURN_PWM_FAST = 32;
 const int RIGHT_TURN_PWM_SLOW = 25;
 const int HEADING_CORRECT_PWM = 25;
 const int RIGHT_STRAFE_HEADING_PWM = 20;
-const float LEFT_SIDE_TRIM = 1.10f;
-const float FIRST_STAGE_LEFT_SIDE_TRIM = 1.20f;
-const float LEFT_AFTER_TURN_TRIM = 1.20f;
+const float LEFT_SIDE_TRIM = 1.05f;
+const float FIRST_STAGE_LEFT_SIDE_TRIM = 1.15f;
+const float LEFT_AFTER_TURN_TRIM = 1.15f;
+const float LEFT_STRAFE_RIGHT_FRONT_BOOST = 1.10f;
+const float RIGHT_STRAFE_RIGHT_FRONT_BOOST = 1.10f;
+const float RIGHT_STRAFE_LEFT_REAR_BOOST = 1.10f;
 const int PRETURN_FORWARD_PWM = 31;
 const unsigned long PRETURN_FORWARD_MS = 400UL;
 
@@ -245,16 +248,19 @@ void moveBackward(int pwm) {
 }
 
 void strafeLeft(int pwm) {
+  int rightFrontPwm = constrain(static_cast<int>(pwm * LEFT_STRAFE_RIGHT_FRONT_BOOST), 0, 255);
   MOTORA_BACKOFF(pwm);
-  MOTORB_BACKOFF(pwm);
+  MOTORB_BACKOFF(rightFrontPwm);
   MOTORC_FORWARD(pwm);
   MOTORD_FORWARD(pwm);
 }
 
 void strafeRight(int pwm) {
+  int rightFrontPwm = constrain(static_cast<int>(pwm * RIGHT_STRAFE_RIGHT_FRONT_BOOST), 0, 255);
+  int leftRearPwm = constrain(static_cast<int>(pwm * RIGHT_STRAFE_LEFT_REAR_BOOST), 0, 255);
   MOTORA_FORWARD(pwm);
-  MOTORB_FORWARD(pwm);
-  MOTORC_BACKOFF(pwm);
+  MOTORB_FORWARD(rightFrontPwm);
+  MOTORC_BACKOFF(leftRearPwm);
   MOTORD_BACKOFF(pwm);
 }
 
