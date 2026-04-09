@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 import queue
@@ -9,7 +7,7 @@ from collections import deque
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Deque, Dict, List, Tuple
 from urllib.parse import urlparse
 
 try:
@@ -23,7 +21,7 @@ DASHBOARD_HTML = BASE_DIR / "dashboard.html"
 UNLOCK_HTML = BASE_DIR / "unlock.html"
 UNLOCK_CONFIG_PATH = BASE_DIR / "unlock_config.json"
 
-DEFAULT_UNLOCK_CONFIG: dict[str, Any] = {
+DEFAULT_UNLOCK_CONFIG = {
     "robot_id": "amr01",
     "unlock_mode": "fixed",
     "fixed_password": "3848",
@@ -35,14 +33,14 @@ state_lock = threading.Lock()
 clients_lock = threading.Lock()
 unlock_lock = threading.Lock()
 
-latest_state: dict[str, Any] = {}
-state_history: deque[dict[str, Any]] = deque(maxlen=100)
-unlock_history: deque[dict[str, Any]] = deque(maxlen=50)
-client_queues: list[queue.Queue[str]] = []
-serial_command_queue: queue.Queue[str] = queue.Queue(maxsize=20)
+latest_state = {}  # type: Dict[str, Any]
+state_history = deque(maxlen=100)  # type: Deque[Dict[str, Any]]
+unlock_history = deque(maxlen=50)  # type: Deque[Dict[str, Any]]
+client_queues = []  # type: List[queue.Queue]
+serial_command_queue = queue.Queue(maxsize=20)
 stop_event = threading.Event()
 
-unlock_config: dict[str, Any] = dict(DEFAULT_UNLOCK_CONFIG)
+unlock_config = dict(DEFAULT_UNLOCK_CONFIG)  # type: Dict[str, Any]
 bridge_mode = "serial"
 last_unlock_sent_ms = 0
 
@@ -51,7 +49,7 @@ def current_time_ms() -> int:
     return int(time.time() * 1000)
 
 
-def load_unlock_config(config_path: Path) -> dict[str, Any]:
+def load_unlock_config(config_path: Path) -> Dict[str, Any]:
     config = dict(DEFAULT_UNLOCK_CONFIG)
     if config_path.exists():
         loaded = json.loads(config_path.read_text(encoding="utf-8"))
@@ -60,7 +58,7 @@ def load_unlock_config(config_path: Path) -> dict[str, Any]:
     return config
 
 
-def broadcast_state(packet: dict[str, Any]) -> None:
+def broadcast_state(packet: Dict[str, Any]) -> None:
     payload = json.dumps(packet, ensure_ascii=False)
 
     with clients_lock:
@@ -80,7 +78,7 @@ def broadcast_state(packet: dict[str, Any]) -> None:
                 pass
 
 
-def update_state(packet: dict[str, Any]) -> None:
+def update_state(packet: Dict[str, Any]) -> None:
     packet["jetson_received_ms"] = current_time_ms()
 
     with state_lock:
@@ -91,7 +89,7 @@ def update_state(packet: dict[str, Any]) -> None:
     broadcast_state(packet)
 
 
-def patch_state(patch: dict[str, Any], add_history: bool = False) -> None:
+def patch_state(patch: Dict[str, Any], add_history: bool = False) -> None:
     with state_lock:
         latest_state.update(patch)
         latest_state["jetson_received_ms"] = current_time_ms()
@@ -229,7 +227,7 @@ def mock_reader_loop() -> None:
         time.sleep(1.0)
 
 
-def verify_unlock_password(password: str) -> tuple[bool, str]:
+def verify_unlock_password(password: str) -> Tuple[bool, str]:
     mode = str(unlock_config.get("unlock_mode", "fixed"))
     if mode != "fixed":
         return False, f"unlock mode {mode} is not supported yet"
@@ -241,7 +239,7 @@ def verify_unlock_password(password: str) -> tuple[bool, str]:
     return True, "password accepted"
 
 
-def trigger_unlock(password: str, client_ip: str) -> tuple[bool, dict[str, Any], HTTPStatus]:
+def trigger_unlock(password: str, client_ip: str) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
     global last_unlock_sent_ms
 
     ok, message = verify_unlock_password(password)
@@ -386,7 +384,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_json(payload)
 
     def serve_events(self) -> None:
-        client_queue: queue.Queue[str] = queue.Queue(maxsize=20)
+        client_queue = queue.Queue(maxsize=20)
         with clients_lock:
             client_queues.append(client_queue)
 
@@ -417,7 +415,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if client_queue in client_queues:
                     client_queues.remove(client_queue)
 
-    def read_json_body(self) -> dict[str, Any]:
+    def read_json_body(self) -> Dict[str, Any]:
         content_length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
         data = json.loads(body.decode("utf-8"))
