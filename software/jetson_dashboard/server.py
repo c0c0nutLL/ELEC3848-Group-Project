@@ -5,8 +5,9 @@ import threading
 import time
 from collections import deque
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from typing import Any, Deque, Dict, List, Tuple
 from urllib.parse import urlparse
 
@@ -43,6 +44,10 @@ stop_event = threading.Event()
 unlock_config = dict(DEFAULT_UNLOCK_CONFIG)  # type: Dict[str, Any]
 bridge_mode = "serial"
 last_unlock_sent_ms = 0
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 
 def current_time_ms() -> int:
@@ -476,7 +481,7 @@ def main() -> None:
     )
     worker.start()
 
-    server = ThreadingHTTPServer((args.host, args.http_port), DashboardHandler)
+    server = ThreadedHTTPServer((args.host, args.http_port), DashboardHandler)
     print(f"[http] dashboard ready at http://{args.host}:{args.http_port}")
     print(f"[http] unlock page ready at http://{args.host}:{args.http_port}/unlock")
 
