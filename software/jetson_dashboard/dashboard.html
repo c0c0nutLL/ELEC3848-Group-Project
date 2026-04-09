@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMR Telemetry Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f1ea;
+      --panel: #fffdf8;
+      --line: #d7d1c4;
+      --text: #1d1c19;
+      --muted: #6d675c;
+      --accent: #206a5d;
+      --warn: #c0542f;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, #fff5d9 0, transparent 28%),
+        radial-gradient(circle at bottom right, #d8efe7 0, transparent 30%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: 32px;
+      letter-spacing: 0.02em;
+    }
+
+    .hero p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 0 5px rgba(192, 84, 47, 0.14);
+    }
+
+    .dot.live {
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(32, 106, 93, 0.14);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .card, .log-panel, .raw-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(29, 28, 25, 0.05);
+    }
+
+    .card .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+
+    .card .value {
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .bottom {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 14px;
+    }
+
+    .log-list {
+      list-style: none;
+      padding: 0;
+      margin: 12px 0 0;
+      display: grid;
+      gap: 10px;
+      max-height: 420px;
+      overflow: auto;
+    }
+
+    .log-list li {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .log-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .log-meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #f7f4ed;
+      overflow: auto;
+      min-height: 250px;
+    }
+
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .bottom {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <h1>AMR Telemetry Dashboard</h1>
+        <p>Arduino -> USB Serial -> Jetson Nano -> Browser</p>
+      </div>
+      <div class="status-pill">
+        <span id="live-dot" class="dot"></span>
+        <span id="live-text">Waiting for data</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card"><div class="label">State</div><div id="state" class="value">--</div></div>
+      <div class="card"><div class="label">Target Station</div><div id="target_station" class="value">--</div></div>
+      <div class="card"><div class="label">Delivery Result</div><div id="delivery_result" class="value">--</div></div>
+      <div class="card"><div class="label">Cargo Door</div><div id="cargo_door" class="value">--</div></div>
+
+      <div class="card"><div class="label">Right Distance</div><div id="right_cm" class="value">--</div></div>
+      <div class="card"><div class="label">Left Distance</div><div id="left_cm" class="value">--</div></div>
+      <div class="card"><div class="label">Avg Distance</div><div id="avg_cm" class="value">--</div></div>
+      <div class="card"><div class="label">Diff</div><div id="diff_cm" class="value">--</div></div>
+
+      <div class="card"><div class="label">Heading</div><div id="heading_deg" class="value">--</div></div>
+      <div class="card"><div class="label">RFID Tag</div><div id="rfid_tag" class="value">--</div></div>
+      <div class="card"><div class="label">RFID Match</div><div id="rfid_match" class="value">--</div></div>
+      <div class="card"><div class="label">Fault</div><div id="fault" class="value">--</div></div>
+    </div>
+
+    <div class="bottom">
+      <div class="log-panel">
+        <div class="label">Recent Events</div>
+        <ul id="log-list" class="log-list"></ul>
+      </div>
+
+      <div class="raw-panel">
+        <div class="label">Latest JSON</div>
+        <pre id="raw-json">{}</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fields = [
+      "state", "target_station", "delivery_result", "cargo_door",
+      "right_cm", "left_cm", "avg_cm", "diff_cm",
+      "heading_deg", "rfid_tag", "rfid_match", "fault"
+    ];
+
+    const liveDot = document.getElementById("live-dot");
+    const liveText = document.getElementById("live-text");
+    const rawJson = document.getElementById("raw-json");
+    const logList = document.getElementById("log-list");
+
+    function setLive(isLive, text) {
+      liveDot.classList.toggle("live", isLive);
+      liveText.textContent = text;
+    }
+
+    function formatValue(value, key) {
+      if (value === undefined || value === null || value === "") {
+        return "--";
+      }
+      if (typeof value === "number" && key.endsWith("_cm")) {
+        return `${value.toFixed(1)} cm`;
+      }
+      if (typeof value === "number" && key === "heading_deg") {
+        return `${value.toFixed(1)} deg`;
+      }
+      if (typeof value === "boolean") {
+        return value ? "true" : "false";
+      }
+      return String(value);
+    }
+
+    function appendLog(packet) {
+      const item = document.createElement("li");
+      const title = document.createElement("div");
+      title.className = "log-title";
+      title.innerHTML = `<span>${packet.state || "--"}</span><span>${packet.delivery_result || "--"}</span>`;
+
+      const meta = document.createElement("div");
+      meta.className = "log-meta";
+      meta.textContent =
+        `R=${formatValue(packet.right_cm, "right_cm")}  ` +
+        `L=${formatValue(packet.left_cm, "left_cm")}  ` +
+        `RFID=${packet.rfid_tag || "--"}`;
+
+      item.appendChild(title);
+      item.appendChild(meta);
+      logList.prepend(item);
+
+      while (logList.children.length > 25) {
+        logList.removeChild(logList.lastChild);
+      }
+    }
+
+    function render(packet) {
+      fields.forEach((key) => {
+        const node = document.getElementById(key);
+        if (node) {
+          node.textContent = formatValue(packet[key], key);
+        }
+      });
+
+      rawJson.textContent = JSON.stringify(packet, null, 2);
+      setLive(true, `Live update: ${new Date().toLocaleTimeString()}`);
+      appendLog(packet);
+    }
+
+    async function loadInitialState() {
+      try {
+        const response = await fetch("/api/state");
+        if (!response.ok) {
+          return;
+        }
+        const packet = await response.json();
+        if (Object.keys(packet).length > 0) {
+          render(packet);
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const response = await fetch("/api/history");
+        if (!response.ok) {
+          return;
+        }
+        const history = await response.json();
+        logList.innerHTML = "";
+        history.slice().reverse().forEach((packet) => appendLog(packet));
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function connectEvents() {
+      const source = new EventSource("/events");
+
+      source.onmessage = (event) => {
+        const packet = JSON.parse(event.data);
+        render(packet);
+      };
+
+      source.onerror = () => {
+        setLive(false, "Disconnected, retrying...");
+      };
+    }
+
+    loadInitialState();
+    loadHistory();
+    connectEvents();
+  </script>
+</body>
+</html>

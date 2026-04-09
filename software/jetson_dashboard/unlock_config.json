@@ -1,0 +1,7 @@
+{
+  "robot_id": "amr01",
+  "unlock_mode": "fixed",
+  "fixed_password": "3848",
+  "door_command": "OPEN_DOOR",
+  "unlock_cooldown_ms": 5000
+}
