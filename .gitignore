@@ -5,6 +5,7 @@
 *.zip
 *.ZIP
 *.apk
+*.jpg
 
 venv/
 .venv/
