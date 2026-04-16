@@ -30,9 +30,17 @@ DEFAULT_UNLOCK_CONFIG = {
     "unlock_cooldown_ms": 5000,
 }
 
+ALLOWED_DRIVE_DIRECTIONS = {"STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT"}
+DEFAULT_DRIVE_POWER = 96
+MAX_DRIVE_POWER = 255
+MOCK_UNLOCK_OPEN_MS = 5000
+MOCK_DISTANCE_MIN_CM = 8.0
+MOCK_DISTANCE_MAX_CM = 150.0
+
 state_lock = threading.Lock()
 clients_lock = threading.Lock()
 unlock_lock = threading.Lock()
+control_lock = threading.Lock()
 
 latest_state = {}  # type: Dict[str, Any]
 state_history = deque(maxlen=100)  # type: Deque[Dict[str, Any]]
@@ -44,6 +52,18 @@ stop_event = threading.Event()
 unlock_config = dict(DEFAULT_UNLOCK_CONFIG)  # type: Dict[str, Any]
 bridge_mode = "serial"
 last_unlock_sent_ms = 0
+mock_unlock_until_ms = 0
+control_state = {
+    "direction": "STOP",
+    "power": DEFAULT_DRIVE_POWER,
+    "status": "IDLE",
+    "source": "server",
+    "last_command_ms": 0,
+}  # type: Dict[str, Any]
+mock_sensor_state = {
+    "right_cm": 92.0,
+    "left_cm": 89.0,
+}  # type: Dict[str, float]
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -61,6 +81,51 @@ def load_unlock_config(config_path: Path) -> Dict[str, Any]:
         if isinstance(loaded, dict):
             config.update(loaded)
     return config
+
+
+def clamp(value: int, lower: int, upper: int) -> int:
+    return max(lower, min(upper, value))
+
+
+def normalize_direction(raw_direction: Any) -> str:
+    direction = str(raw_direction or "STOP").strip().upper()
+    if direction not in ALLOWED_DRIVE_DIRECTIONS:
+        raise ValueError(f"direction must be one of {sorted(ALLOWED_DRIVE_DIRECTIONS)}")
+    return direction
+
+
+def normalize_power(raw_power: Any) -> int:
+    try:
+        power = int(raw_power)
+    except (TypeError, ValueError):
+        raise ValueError("power must be an integer") from None
+    return clamp(power, 0, MAX_DRIVE_POWER)
+
+
+def build_control_patch() -> Dict[str, Any]:
+    with control_lock:
+        return {
+            "control_direction": control_state["direction"],
+            "motor_pwm": control_state["power"],
+            "control_status": control_state["status"],
+            "control_source": control_state["source"],
+            "control_last_command_ms": control_state["last_command_ms"] or None,
+        }
+
+
+def set_control_state(direction: str, power: int, status: str, source: str) -> Dict[str, Any]:
+    now_ms = current_time_ms()
+    with control_lock:
+        control_state.update(
+            {
+                "direction": direction,
+                "power": power,
+                "status": status,
+                "source": source,
+                "last_command_ms": now_ms,
+            }
+        )
+    return build_control_patch()
 
 
 def broadcast_state(packet: Dict[str, Any]) -> None:
@@ -87,11 +152,11 @@ def update_state(packet: Dict[str, Any]) -> None:
     packet["jetson_received_ms"] = current_time_ms()
 
     with state_lock:
-        latest_state.clear()
         latest_state.update(packet)
-        state_history.appendleft(dict(packet))
+        state_history.appendleft(dict(latest_state))
+        snapshot = dict(latest_state)
 
-    broadcast_state(packet)
+    broadcast_state(snapshot)
 
 
 def patch_state(patch: Dict[str, Any], add_history: bool = False) -> None:
@@ -119,8 +184,12 @@ def record_unlock_event(success: bool, reason: str, client_ip: str, command_sent
 
 
 def queue_serial_command(command: str) -> bool:
+    global mock_unlock_until_ms
+
     if bridge_mode == "mock":
         print(f"[serial-mock] command={command}")
+        if command == str(unlock_config.get("door_command", "OPEN_DOOR")):
+            mock_unlock_until_ms = current_time_ms() + MOCK_UNLOCK_OPEN_MS
         return True
 
     try:
@@ -159,7 +228,60 @@ def handle_serial_line(line: str) -> None:
         return
 
     update_state(packet)
-    print(f"[serial] state={packet.get('state', '?')} result={packet.get('delivery_result', '?')}")
+    print(
+        "[serial] "
+        f"state={packet.get('state', '?')} "
+        f"result={packet.get('delivery_result', '?')} "
+        f"direction={packet.get('control_direction', '?')}"
+    )
+
+
+def trigger_manual_drive(
+    direction_raw: Any,
+    power_raw: Any,
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    try:
+        direction = normalize_direction(direction_raw)
+        power = normalize_power(power_raw)
+    except ValueError as exc:
+        return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    if direction != "STOP" and power == 0:
+        direction = "STOP"
+
+    command = f"DRIVE {direction} {power}"
+    if not queue_serial_command(command):
+        return False, {"ok": False, "message": "command queue is full"}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    status = "ACTIVE" if direction != "STOP" else "IDLE"
+    message = "stop command queued" if direction == "STOP" else f"{direction.lower()} command queued"
+
+    patch_state(
+        {
+            **set_control_state(direction, power, status, source),
+            "state": "IDLE" if direction == "STOP" else f"MANUAL_{direction}",
+            "delivery_result": "READY" if direction == "STOP" else "MANUAL_CONTROL",
+            "target_station": "MANUAL",
+            "control_message": message,
+            "control_last_client": client_ip,
+            "fault": "",
+        },
+        add_history=True,
+    )
+
+    return (
+        True,
+        {
+            "ok": True,
+            "message": message,
+            "command": command,
+            "direction": direction,
+            "power": power,
+        },
+        HTTPStatus.OK,
+    )
 
 
 def serial_reader_loop(port: str, baudrate: int) -> None:
@@ -190,46 +312,79 @@ def serial_reader_loop(port: str, baudrate: int) -> None:
                 "delivery_result": "SERIAL_DISCONNECTED",
                 "bridge_mode": "serial",
                 "bridge_status": "DISCONNECTED",
+                "control_direction": "STOP",
+                "control_status": "OFFLINE",
+                "right_cm": None,
+                "left_cm": None,
+                "avg_cm": None,
+                "diff_cm": None,
+                "heading_deg": None,
                 "fault": str(exc),
             })
             time.sleep(2)
 
 
 def mock_reader_loop() -> None:
-    demo_states = [
-        {"state": "IDLE", "delivery_result": "READY"},
-        {"state": "MOVING", "delivery_result": "RUNNING"},
-        {"state": "DOCKING", "delivery_result": "RUNNING"},
-        {"state": "RFID_CHECK", "delivery_result": "VERIFYING"},
-        {"state": "CARGO_RELEASE", "delivery_result": "DELIVERING"},
-        {"state": "REPORTING", "delivery_result": "UPLOADING"},
-        {"state": "DONE", "delivery_result": "SUCCESS"},
-    ]
-
-    index = 0
     start_ms = current_time_ms()
     while not stop_event.is_set():
-        state = dict(demo_states[index % len(demo_states)])
-        phase = index % len(demo_states)
+        with control_lock:
+            direction = str(control_state["direction"])
+            power = int(control_state["power"])
+            control_status = str(control_state["status"])
+            control_source = str(control_state["source"])
+            control_last_command_ms = int(control_state["last_command_ms"])
+
+        right_cm = mock_sensor_state["right_cm"]
+        left_cm = mock_sensor_state["left_cm"]
+        step = max(0.5, power / 90.0)
+
+        if direction == "FORWARD":
+            right_cm = max(MOCK_DISTANCE_MIN_CM, right_cm - step)
+            left_cm = max(MOCK_DISTANCE_MIN_CM, left_cm - step * 0.95)
+        elif direction == "BACKWARD":
+            right_cm = min(MOCK_DISTANCE_MAX_CM, right_cm + step)
+            left_cm = min(MOCK_DISTANCE_MAX_CM, left_cm + step * 0.95)
+        elif direction == "LEFT":
+            right_cm = min(MOCK_DISTANCE_MAX_CM, right_cm + step * 0.35)
+            left_cm = max(MOCK_DISTANCE_MIN_CM, left_cm - step * 0.35)
+        elif direction == "RIGHT":
+            right_cm = max(MOCK_DISTANCE_MIN_CM, right_cm - step * 0.35)
+            left_cm = min(MOCK_DISTANCE_MAX_CM, left_cm + step * 0.35)
+
+        mock_sensor_state["right_cm"] = right_cm
+        mock_sensor_state["left_cm"] = left_cm
+
+        cargo_door = "OPEN" if current_time_ms() < mock_unlock_until_ms else "CLOSED"
+        state = "IDLE" if direction == "STOP" else f"MANUAL_{direction}"
+        delivery_result = "READY" if direction == "STOP" else "MANUAL_CONTROL"
+        if direction == "STOP" and cargo_door == "OPEN":
+            state = "REMOTE_UNLOCK"
+            delivery_result = "UNLOCKED"
+
         packet = {
             "ts_ms": current_time_ms() - start_ms,
-            "target_station": "A1",
-            "right_cm": round(60.0 - phase * 7.0, 1),
-            "left_cm": round(58.0 - phase * 7.0, 1),
-            "avg_cm": round(59.0 - phase * 7.0, 1),
-            "diff_cm": 2.0,
-            "heading_deg": round(max(0.0, 3.5 - phase * 0.4), 1),
-            "rfid_tag": "STATION_A1" if phase >= 3 else "",
-            "rfid_match": phase >= 3,
-            "cargo_door": "OPEN" if phase == 4 else "CLOSED",
+            "state": state,
+            "target_station": "MANUAL",
+            "right_cm": round(right_cm, 1),
+            "left_cm": round(left_cm, 1),
+            "avg_cm": round((right_cm + left_cm) * 0.5, 1),
+            "diff_cm": round(right_cm - left_cm, 1),
+            "heading_deg": 0.0,
+            "rfid_tag": "",
+            "rfid_match": False,
+            "cargo_door": cargo_door,
             "fault": "",
             "bridge_mode": "mock",
             "bridge_status": "CONNECTED",
-            **state,
+            "delivery_result": delivery_result,
+            "control_direction": direction,
+            "motor_pwm": power,
+            "control_status": control_status,
+            "control_source": control_source,
+            "control_last_command_ms": control_last_command_ms or None,
         }
         update_state(packet)
-        index += 1
-        time.sleep(1.0)
+        time.sleep(0.2)
 
 
 def verify_unlock_password(password: str) -> Tuple[bool, str]:
@@ -343,6 +498,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.handle_unlock_post()
             return
 
+        if parsed.path == "/api/control":
+            self.handle_control_post()
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -384,6 +543,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "http_paths": {
                 "dashboard": "/",
                 "unlock": "/unlock",
+            },
+            "manual_control": {
+                "api_path": "/api/control",
+                "directions": sorted(ALLOWED_DRIVE_DIRECTIONS),
+                "default_power": DEFAULT_DRIVE_POWER,
+                "max_power": MAX_DRIVE_POWER,
             },
         }
         self.send_json(payload)
@@ -443,6 +608,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             self.send_json(payload, status)
 
+    def handle_control_post(self) -> None:
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        direction = data.get("direction", "STOP")
+        power = data.get("power", DEFAULT_DRIVE_POWER)
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_manual_drive(direction, power, client_ip, source=source)
+        self.send_json(payload, status)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Jetson Nano serial telemetry dashboard")
@@ -472,6 +651,7 @@ def main() -> None:
         "unlock_mode": unlock_config.get("unlock_mode", "fixed"),
         "unlock_status": "IDLE",
         "unlock_message": "",
+        **build_control_patch(),
     })
 
     worker = threading.Thread(

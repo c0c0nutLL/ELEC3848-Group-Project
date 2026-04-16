@@ -1,51 +1,58 @@
-# Jetson Dashboard And Unlock Draft
+# Jetson Dashboard
 
-这个目录现在包含两条功能链路：
+这个目录提供一条完整链路：
 
 - `Arduino -> USB Serial -> Jetson Nano -> Browser`
+- `Browser -> Jetson HTTP API -> USB Serial -> Arduino`
 - `Phone QR Scan -> Jetson Unlock Page -> Password Verify -> Serial OPEN_DOOR -> Arduino`
 
-## 文件说明
+当前版本除了显示 telemetry，也支持从网页直接手动控制 Arduino 小车前后左右移动，并通过滑条调整电机功率。
+
+## 主要文件
 
 - [server.py](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/server.py)
   - Jetson 主服务
-  - 读取 Arduino 串口 JSON 状态
-  - 提供 dashboard 页面
-  - 提供 unlock 页面
-  - 提供固定密码校验接口
-  - 向 Arduino 下发 `OPEN_DOOR`
-
+  - 读取 Arduino 串口 JSON telemetry
+  - 提供 dashboard 页面、unlock 页面和手动控制 API
 - [dashboard.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/dashboard.html)
-  - 实时遥测页面
-
+  - 实时状态页
+  - 包含方向按钮、功率滑条、键盘控制和事件日志
 - [unlock.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/unlock.html)
-  - 手机扫码后打开的固定密码开仓页面
-
+  - 手机扫码后访问的开仓页面
 - [unlock_config.json](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/unlock_config.json)
-  - 当前开仓配置
-  - 现在先使用固定密码模式
-
+  - 固定密码与开仓命令配置
 - [requirements.txt](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/requirements.txt)
-  - 目前只需要 `pyserial`
+  - 当前只需要 `pyserial`
 
-## Arduino 端配套草稿
+## 配套 Arduino 草图
 
-配套 Arduino 草稿在：
+当前配套的 Arduino 草图是：
 
 - [telemetry_serial_demo.ino](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/firmware/arduino/proposal_amr/telemetry_serial_demo/telemetry_serial_demo.ino)
 
-它现在做两件事：
+这个草图现在提供：
 
-- 每 `200 ms` 发送一条 JSON 遥测状态
-- 监听来自 Jetson 的 `OPEN_DOOR` 命令
+- 电机方向命令：`DRIVE FORWARD/BACKWARD/LEFT/RIGHT/STOP <PWM>`
+- `OPEN_DOOR` 命令
+- 周期性 JSON telemetry
+- 前方左右超声波距离上报
+- 控制状态回传，例如 `control_direction`、`motor_pwm`、`control_status`
 
-收到 `OPEN_DOOR` 后，这个 demo 会临时把状态切成：
+主要 JSON 字段包括：
 
-- `state = REMOTE_UNLOCK`
-- `cargo_door = OPEN`
-- `delivery_result = UNLOCKED`
-
-这只是联调用的占位逻辑。后面接真实舵机时，把这里替换成真正的 servo 开门代码即可。
+- `state`
+- `target_station`
+- `right_cm`
+- `left_cm`
+- `avg_cm`
+- `diff_cm`
+- `heading_deg`
+- `cargo_door`
+- `delivery_result`
+- `control_direction`
+- `motor_pwm`
+- `control_status`
+- `fault`
 
 ## Jetson Nano 运行方式
 
@@ -64,7 +71,7 @@ pip3 install -r requirements.txt
 启动服务：
 
 ```bash
-python3 server.py --serial /dev/ttyACM0 --baud 115200 --http-port 8080
+python3 server.py --serial /dev/ttyUSB0 --baud 115200 --http-port 8080
 ```
 
 如果 Arduino 枚举成别的设备名，也可能是：
@@ -74,25 +81,50 @@ python3 server.py --serial /dev/ttyACM0 --baud 115200 --http-port 8080
 
 启动后可访问：
 
-- Dashboard
-  - `http://<jetson-ip>:8080/`
-- Unlock 页面
-  - `http://<jetson-ip>:8080/unlock`
+- Dashboard: `http://<jetson-ip>:8080/`
+- Unlock 页面: `http://<jetson-ip>:8080/unlock`
 
-## 没接 Arduino 时的测试方式
+## Dashboard 操作方式
 
-如果只是先测网页链路：
+手动控制页面在 `/`：
+
+- 长按 `Forward / Backward / Left / Right` 按钮可持续运动
+- 松开按钮会立即发送 `STOP`
+- 中间 `Stop` 和 `Emergency Stop` 都会立即发送 `STOP`
+- 可用滑条调整 PWM 功率
+- 支持键盘 `W/A/S/D` 或方向键
+
+Jetson 端控制接口：
+
+- `POST /api/control`
+
+请求体示例：
+
+```json
+{
+  "direction": "FORWARD",
+  "power": 120,
+  "source": "dashboard"
+}
+```
+
+## 无 Arduino 时的网页联调
+
+如果只是先调网页和 API，可以使用 mock 模式：
 
 ```bash
 python3 server.py --mock --http-port 8080
 ```
 
-这样 dashboard 会自己显示演示状态。  
-注意：`--mock` 只适合测页面，不适合真串口开仓联调。
+在 mock 模式下：
 
-## 当前固定密码配置
+- dashboard 仍然可以收实时状态
+- 手动控制按钮仍然会更新方向、功率和模拟距离
+- `OPEN_DOOR` 仍然会触发模拟开门状态
 
-当前配置文件是：
+## 当前 unlock 配置
+
+默认配置文件是：
 
 - [unlock_config.json](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/unlock_config.json)
 
@@ -108,27 +140,18 @@ python3 server.py --mock --http-port 8080
 }
 ```
 
-现在的行为是：
+当前行为：
 
 - 手机打开 `/unlock`
 - 输入固定密码 `3848`
 - Jetson 校验成功后，把 `OPEN_DOOR` 通过串口发给 Arduino
-- 冷却时间默认 `5 秒`
 
-## 这版的定位
+## 现阶段定位
 
-这是第一版“先把开仓链路打通”的代码，不是最终安全版本。
+这版代码已经适合做 Jetson 与 Arduino 的手动控制联调，但还不是最终 proposal 自动流程。
 
-当前已完成：
+后续仍需要：
 
-- 固定密码页面
-- Jetson 端密码验证
-- Jetson 到 Arduino 的串口开门命令
-- Dashboard 与 unlock 页面共存
-
-下一步可以继续做：
-
-1. 把 `OPEN_DOOR` 从 demo 状态改成真实舵机动作
-2. 记录每次开仓日志
-3. 限制只有特定状态下才允许开仓
-4. 升级成随机密码 / 一次性密码
+1. 把手动控制/演示状态替换成完整的 proposal 状态机
+2. 接入真实 RFID、servo 和完整 docking 逻辑
+3. 进一步细化失败状态、任务日志和演示脚本
