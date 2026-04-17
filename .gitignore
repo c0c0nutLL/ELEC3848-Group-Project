@@ -6,6 +6,9 @@
 *.ZIP
 *.apk
 *.jpg
+*.engine
+*.pt
+*.onnx
 
 venv/
 .venv/
