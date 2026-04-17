@@ -5,339 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AMR Telemetry Dashboard</title>
   <style>
-    :root {
-      color-scheme: light;
-      --bg: #f3f1ea;
-      --panel: #fffdf8;
-      --line: #d7d1c4;
-      --text: #1d1c19;
-      --muted: #6d675c;
-      --accent: #206a5d;
-      --accent-soft: rgba(32, 106, 93, 0.12);
-      --warn: #c0542f;
-      --warn-soft: rgba(192, 84, 47, 0.14);
-      --shadow: 0 10px 30px rgba(29, 28, 25, 0.05);
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      background:
-        radial-gradient(circle at top left, #fff5d9 0, transparent 28%),
-        radial-gradient(circle at bottom right, #d8efe7 0, transparent 30%),
-        var(--bg);
-      color: var(--text);
-    }
-
-    button,
-    input {
-      font: inherit;
-    }
-
-    .page {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 24px;
-    }
-
-    .hero {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      align-items: center;
-      margin-bottom: 18px;
-    }
-
-    .hero h1 {
-      margin: 0;
-      font-size: 32px;
-      letter-spacing: 0.02em;
-    }
-
-    .hero p {
-      margin: 8px 0 0;
-      color: var(--muted);
-    }
-
-    .hero-links {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .ghost-link,
-    .stop-wide {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 10px 14px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      color: var(--text);
-      text-decoration: none;
-      cursor: pointer;
-      box-shadow: var(--shadow);
-    }
-
-    .stop-wide {
-      width: 100%;
-      background: #fff3ed;
-      border-color: rgba(192, 84, 47, 0.28);
-      color: var(--warn);
-      font-weight: 700;
-    }
-
-    .status-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 14px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      white-space: nowrap;
-      box-shadow: var(--shadow);
-    }
-
-    .dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--warn);
-      box-shadow: 0 0 0 5px var(--warn-soft);
-    }
-
-    .dot.live {
-      background: var(--accent);
-      box-shadow: 0 0 0 5px var(--accent-soft);
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-      margin-bottom: 14px;
-    }
-
-    .card,
-    .control-panel,
-    .log-panel,
-    .raw-panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 16px;
-      box-shadow: var(--shadow);
-    }
-
-    .label {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 10px;
-    }
-
-    .card .value {
-      font-size: 24px;
-      font-weight: 700;
-      line-height: 1.2;
-      word-break: break-word;
-    }
-
-    .card .value.small {
-      font-size: 18px;
-    }
-
-    .control-panel {
-      margin-bottom: 14px;
-    }
-
-    .section-title {
-      margin: 0 0 14px;
-      font-size: 18px;
-      letter-spacing: 0.02em;
-    }
-
-    .control-layout {
-      display: grid;
-      grid-template-columns: minmax(240px, 280px) minmax(260px, 1fr) minmax(220px, 260px);
-      gap: 16px;
-      align-items: stretch;
-    }
-
-    .power-panel,
-    .pad-panel,
-    .hint-panel {
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 16px;
-      background: rgba(255, 255, 255, 0.55);
-    }
-
-    .power-meta {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-
-    .power-number {
-      font-size: 34px;
-      font-weight: 700;
-    }
-
-    .power-unit {
-      color: var(--muted);
-    }
-
-    .power-slider {
-      width: 100%;
-      accent-color: var(--accent);
-      margin-bottom: 14px;
-    }
-
-    .pad {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(72px, 1fr));
-      grid-template-areas:
-        ". up ."
-        "left stop right"
-        ". down .";
-      gap: 10px;
-      min-height: 240px;
-      touch-action: none;
-    }
-
-    .drive-btn {
-      border: 1px solid rgba(32, 106, 93, 0.2);
-      border-radius: 18px;
-      background: #f8faf7;
-      color: var(--text);
-      font-weight: 700;
-      cursor: pointer;
-      min-height: 72px;
-      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
-      touch-action: none;
-      user-select: none;
-    }
-
-    .drive-btn:hover {
-      border-color: rgba(32, 106, 93, 0.35);
-    }
-
-    .drive-btn:active,
-    .drive-btn.active {
-      transform: translateY(1px) scale(0.99);
-      background: rgba(32, 106, 93, 0.12);
-      border-color: rgba(32, 106, 93, 0.5);
-    }
-
-    .drive-btn.stop {
-      background: #fff3ed;
-      border-color: rgba(192, 84, 47, 0.24);
-      color: var(--warn);
-    }
-
-    .drive-btn.up { grid-area: up; }
-    .drive-btn.left { grid-area: left; }
-    .drive-btn.stop { grid-area: stop; }
-    .drive-btn.right { grid-area: right; }
-    .drive-btn.down { grid-area: down; }
-
-    .hint-panel p,
-    .hint-panel ul,
-    .hint {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-
-    .hint-panel ul {
-      padding-left: 18px;
-      margin-top: 8px;
-    }
-
-    .feedback {
-      min-height: 44px;
-      margin-bottom: 14px;
-    }
-
-    .bottom {
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 14px;
-    }
-
-    .log-list {
-      list-style: none;
-      padding: 0;
-      margin: 12px 0 0;
-      display: grid;
-      gap: 10px;
-      max-height: 420px;
-      overflow: auto;
-    }
-
-    .log-list li {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 12px;
-      background: rgba(255, 255, 255, 0.55);
-    }
-
-    .log-title {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      font-weight: 600;
-      margin-bottom: 6px;
-    }
-
-    .log-meta {
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    pre {
-      margin: 12px 0 0;
-      padding: 14px;
-      border-radius: 14px;
-      border: 1px solid var(--line);
-      background: #f7f4ed;
-      overflow: auto;
-      min-height: 250px;
-    }
-
-    @media (max-width: 980px) {
-      .grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .control-layout,
-      .bottom {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 720px) {
-      .page {
-        padding: 18px;
-      }
-
-      .hero {
-        flex-direction: column;
-        align-items: flex-start;
-      }
-
-      .hero-links {
-        width: 100%;
-        justify-content: space-between;
-      }
-    }
+    :root{--bg:#f3f1ea;--panel:#fffdf8;--line:#d7d1c4;--text:#1d1c19;--muted:#6d675c;--accent:#206a5d;--warn:#c0542f;--shadow:0 10px 30px rgba(29,28,25,.05)}
+    *{box-sizing:border-box}body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;background:radial-gradient(circle at top left,#fff5d9 0,transparent 28%),radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),var(--bg);color:var(--text)}
+    button,input{font:inherit}a{text-decoration:none;color:inherit}[hidden]{display:none!important}
+    .page{max-width:1380px;margin:0 auto;padding:24px}.hero,.panel-head,.title-row,.arm-head,.log-title{display:flex;justify-content:space-between;gap:12px;align-items:center}
+    .hero{margin-bottom:16px}.hero h1,.panel-head h2,.module h3{margin:0}.hero p,.sub,.hint,.sidebar p,.log-meta{margin:6px 0 0;color:var(--muted);line-height:1.5}
+    .pill,.btn,.mini,.step,.apply,.drive{border:1px solid var(--line);background:var(--panel);border-radius:999px;box-shadow:var(--shadow)}
+    .pill{display:inline-flex;align-items:center;gap:10px;padding:10px 14px}.dot{width:10px;height:10px;border-radius:50%;background:var(--warn)}.dot.live{background:var(--accent)}
+    .layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px}.sidebar,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
+    .sidebar{padding:16px;position:sticky;top:18px}.content{display:grid;gap:16px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+    .toggle{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55);margin-top:10px}
+    .switch{position:relative;width:50px;height:28px;flex:0 0 auto}.switch input{position:absolute;inset:0;opacity:0}.track{position:absolute;inset:0;border-radius:999px;background:#d8d1c4}.track:after{content:"";position:absolute;width:20px;height:20px;left:4px;top:4px;border-radius:50%;background:#fff;transition:transform .12s ease}
+    .switch input:checked+.track{background:rgba(32,106,93,.72)}.switch input:checked+.track:after{transform:translateX(22px)}
+    .panel{padding:16px}.mini,.btn,.step,.apply{display:inline-flex;align-items:center;justify-content:center;padding:9px 13px;cursor:pointer}.mini{font-size:13px}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}.card,.module,.arm-card{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55)}
+    .card{padding:14px}.value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}.small{font-size:17px}
+    .stack{display:grid;gap:14px}.module{padding:16px}.pad-wrap,.power-wrap{display:grid;grid-template-columns:minmax(240px,1fr) minmax(220px,280px);gap:16px;align-items:center}
+    .pad{display:grid;grid-template-columns:repeat(3,minmax(72px,1fr));grid-template-areas:". up ." "left stop right" ". down .";gap:10px;min-height:220px}
+    .drive{min-height:70px;border-radius:18px;cursor:pointer;font-weight:700}.drive.up{grid-area:up}.drive.left{grid-area:left}.drive.stop{grid-area:stop;background:#fff3ed;color:var(--warn)}.drive.right{grid-area:right}.drive.down{grid-area:down}.drive.active{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.45)}
+    .stop-wide{width:100%;margin-top:12px;padding:11px 14px;border-radius:999px;border:1px solid rgba(192,84,47,.24);background:#fff3ed;color:var(--warn);font-weight:700;box-shadow:var(--shadow);cursor:pointer}
+    .power-box,.arm-card{padding:16px;background:#f8faf7}.power-meta,.arm-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}.power-num,.arm-num{font-size:30px;font-weight:700}.slider{width:100%;accent-color:var(--accent)}
+    .arm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.arm-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}.apply{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.3);color:var(--accent);font-weight:700}
+    .bottom{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.log-list{list-style:none;padding:0;margin:0;display:grid;gap:10px;max-height:420px;overflow:auto}.log-list li{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55)}
+    pre{margin:0;padding:14px;border-radius:14px;border:1px solid var(--line);background:#f7f4ed;overflow:auto;min-height:240px}
+    @media (max-width:1100px){.layout,.pad-wrap,.power-wrap,.bottom{grid-template-columns:1fr}.sidebar{position:static}}
+    @media (max-width:780px){.arm-grid{grid-template-columns:1fr}.hero,.panel-head{flex-direction:column;align-items:flex-start}.page{padding:18px}}
   </style>
 </head>
 <body>
@@ -347,429 +39,204 @@
         <h1>AMR Telemetry Dashboard</h1>
         <p>Arduino -> USB Serial -> Jetson Nano -> Browser</p>
       </div>
-      <div class="hero-links">
-        <a class="ghost-link" href="/unlock">Unlock Page</a>
-        <div class="status-pill">
-          <span id="live-dot" class="dot"></span>
-          <span id="live-text">Waiting for data</span>
-        </div>
-      </div>
+      <div class="pill"><span id="live-dot" class="dot"></span><span id="live-text">Waiting for data</span></div>
     </div>
 
-    <div class="grid">
-      <div class="card"><div class="label">State</div><div id="state" class="value">--</div></div>
-      <div class="card"><div class="label">Control Direction</div><div id="control_direction" class="value">--</div></div>
-      <div class="card"><div class="label">Motor Power</div><div id="motor_pwm" class="value">--</div></div>
-      <div class="card"><div class="label">Control Status</div><div id="control_status" class="value">--</div></div>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="label">Control Sidebar</div>
+        <h2>Module Switches</h2>
+        <p>Turn modules on to show their control UI. Turning a module off hides its controls.</p>
 
-      <div class="card"><div class="label">Delivery Result</div><div id="delivery_result" class="value">--</div></div>
-      <div class="card"><div class="label">Target Station</div><div id="target_station" class="value">--</div></div>
-      <div class="card"><div class="label">Cargo Door</div><div id="cargo_door" class="value">--</div></div>
-      <div class="card"><div class="label">Bridge</div><div id="bridge_status" class="value">--</div></div>
+        <label class="toggle" for="toggle-drive">
+          <div><strong>Vehicle Direction</strong><div class="sub">Drive pad and emergency stop</div></div>
+          <span class="switch"><input id="toggle-drive" type="checkbox" checked><span class="track"></span></span>
+        </label>
 
-      <div class="card"><div class="label">Right Distance</div><div id="right_cm" class="value">--</div></div>
-      <div class="card"><div class="label">Left Distance</div><div id="left_cm" class="value">--</div></div>
-      <div class="card"><div class="label">Avg Distance</div><div id="avg_cm" class="value">--</div></div>
-      <div class="card"><div class="label">Diff</div><div id="diff_cm" class="value">--</div></div>
+        <label class="toggle" for="toggle-power">
+          <div><strong>Motor Power</strong><div class="sub">PWM slider panel</div></div>
+          <span class="switch"><input id="toggle-power" type="checkbox" checked><span class="track"></span></span>
+        </label>
 
-      <div class="card"><div class="label">Heading</div><div id="heading_deg" class="value">--</div></div>
-      <div class="card"><div class="label">RFID Tag</div><div id="rfid_tag" class="value small">--</div></div>
-      <div class="card"><div class="label">RFID Match</div><div id="rfid_match" class="value">--</div></div>
-      <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
-    </div>
+        <label class="toggle" for="toggle-arm">
+          <div><strong>Mechanical Arm</strong><div class="sub">Lift and gripper servo control</div></div>
+          <span class="switch"><input id="toggle-arm" type="checkbox" checked><span class="track"></span></span>
+        </label>
+      </aside>
 
-    <div class="control-panel">
-      <h2 class="section-title">Manual Drive</h2>
-      <div class="control-layout">
-        <div class="power-panel">
-          <div class="label">Motor Power</div>
-          <div class="power-meta">
-            <div class="power-number" id="power-value">96</div>
-            <div class="power-unit">PWM</div>
+      <main class="content">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="label">Status Monitor</div>
+              <h2>Live Robot Status</h2>
+              <p class="sub">Monitor drive state, arm state, telemetry, and bridge health.</p>
+            </div>
+            <a class="mini" href="/unlock">Password Unlock</a>
           </div>
-          <input id="power-slider" class="power-slider" type="range" min="0" max="255" value="96">
-          <div id="control-feedback" class="hint feedback">Hold a direction button to move. Release to stop.</div>
-          <button id="emergency-stop" class="stop-wide" type="button">Emergency Stop</button>
-        </div>
 
-        <div class="pad-panel">
-          <div class="label">Direction Pad</div>
-          <div class="pad">
-            <button class="drive-btn up" type="button" data-direction="FORWARD">Forward</button>
-            <button class="drive-btn left" type="button" data-direction="LEFT">Left</button>
-            <button class="drive-btn stop" type="button" data-direction="STOP">Stop</button>
-            <button class="drive-btn right" type="button" data-direction="RIGHT">Right</button>
-            <button class="drive-btn down" type="button" data-direction="BACKWARD">Backward</button>
+          <div class="cards">
+            <div class="card"><div class="label">State</div><div id="state" class="value">--</div></div>
+            <div class="card"><div class="label">Drive Direction</div><div id="control_direction" class="value">--</div></div>
+            <div class="card"><div class="label">Motor Power</div><div id="motor_pwm" class="value">--</div></div>
+            <div class="card"><div class="label">Drive Status</div><div id="control_status" class="value">--</div></div>
+            <div class="card"><div class="label">Arm Status</div><div id="arm_status" class="value">--</div></div>
+            <div class="card"><div class="label">Arm Lift</div><div id="arm_lift_deg" class="value">--</div></div>
+            <div class="card"><div class="label">Arm Gripper</div><div id="arm_grip_deg" class="value">--</div></div>
+            <div class="card"><div class="label">Delivery Result</div><div id="delivery_result" class="value">--</div></div>
+            <div class="card"><div class="label">Cargo Door</div><div id="cargo_door" class="value">--</div></div>
+            <div class="card"><div class="label">Bridge</div><div id="bridge_status" class="value">--</div></div>
+            <div class="card"><div class="label">Target Station</div><div id="target_station" class="value small">--</div></div>
+            <div class="card"><div class="label">Right Distance</div><div id="right_cm" class="value">--</div></div>
+            <div class="card"><div class="label">Left Distance</div><div id="left_cm" class="value">--</div></div>
+            <div class="card"><div class="label">Avg Distance</div><div id="avg_cm" class="value">--</div></div>
+            <div class="card"><div class="label">Diff</div><div id="diff_cm" class="value">--</div></div>
+            <div class="card"><div class="label">Heading</div><div id="heading_deg" class="value">--</div></div>
+            <div class="card"><div class="label">RFID Tag</div><div id="rfid_tag" class="value small">--</div></div>
+            <div class="card"><div class="label">RFID Match</div><div id="rfid_match" class="value">--</div></div>
+            <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
           </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <div class="label">Control Workspace</div>
+              <h2>Manual Robot Control</h2>
+            </div>
+          </div>
+
+          <div class="stack">
+            <section id="drive-panel" class="module">
+              <div class="label">Vehicle Direction</div>
+              <h3>Drive Pad</h3>
+              <div class="pad-wrap">
+                <div>
+                  <div class="pad">
+                    <button class="drive up" type="button" data-direction="FORWARD">Forward</button>
+                    <button class="drive left" type="button" data-direction="LEFT">Left</button>
+                    <button class="drive stop" type="button" data-direction="STOP">Stop</button>
+                    <button class="drive right" type="button" data-direction="RIGHT">Right</button>
+                    <button class="drive down" type="button" data-direction="BACKWARD">Backward</button>
+                  </div>
+                  <button id="emergency-stop" class="stop-wide" type="button">Emergency Stop</button>
+                </div>
+                <div>
+                  <p id="control-feedback" class="hint">Hold a direction button to move. Release to stop.</p>
+                  <p class="hint">Keyboard: `W A S D` or arrow keys. Space bar sends `STOP` immediately.</p>
+                </div>
+              </div>
+            </section>
+
+            <section id="power-panel" class="module">
+              <div class="label">Motor Power</div>
+              <h3>PWM Output</h3>
+              <div class="power-wrap">
+                <div class="power-box">
+                  <div class="power-meta"><div id="power-value" class="power-num">96</div><div class="sub">PWM</div></div>
+                  <input id="power-slider" class="slider" type="range" min="0" max="255" value="96">
+                </div>
+                <p class="hint">Changing this slider updates the next drive command. If the drive pad is active, the new PWM is sent immediately.</p>
+              </div>
+            </section>
+
+            <section id="arm-panel" class="module">
+              <div class="label">Mechanical Arm</div>
+              <h3>Two-Servo Arm Control</h3>
+              <div class="arm-grid">
+                <div class="arm-card">
+                  <div class="arm-head"><div><div class="label">Lift Servo</div><div id="lift-value" class="arm-num">110 deg</div></div><div id="lift-range" class="sub">0 - 180 deg</div></div>
+                  <input id="lift-slider" class="slider" type="range" min="0" max="180" value="110">
+                  <div class="arm-actions">
+                    <button class="step" type="button" data-joint="LIFT" data-delta="-5">Lift -5</button>
+                    <button id="send-lift" class="apply" type="button">Send Lift</button>
+                    <button class="step" type="button" data-joint="LIFT" data-delta="5">Lift +5</button>
+                  </div>
+                </div>
+                <div class="arm-card">
+                  <div class="arm-head"><div><div class="label">Gripper Servo</div><div id="grip-value" class="arm-num">90 deg</div></div><div id="grip-range" class="sub">0 - 180 deg</div></div>
+                  <input id="grip-slider" class="slider" type="range" min="0" max="180" value="90">
+                  <div class="arm-actions">
+                    <button class="step" type="button" data-joint="GRIP" data-delta="-5">Grip -5</button>
+                    <button id="send-grip" class="apply" type="button">Send Grip</button>
+                    <button class="step" type="button" data-joint="GRIP" data-delta="5">Grip +5</button>
+                  </div>
+                </div>
+              </div>
+              <p id="arm-feedback" class="hint">Adjust the lift and gripper sliders, then send the selected angle to Arduino.</p>
+            </section>
+          </div>
+        </section>
+
+        <div class="bottom">
+          <section class="panel">
+            <div class="label">Recent Events</div>
+            <h2>Live Event Log</h2>
+            <ul id="log-list" class="log-list"></ul>
+          </section>
+          <section class="panel">
+            <div class="label">Latest JSON</div>
+            <h2>Raw Telemetry</h2>
+            <pre id="raw-json">{}</pre>
+          </section>
         </div>
-
-        <div class="hint-panel">
-          <div class="label">Usage</div>
-          <p>Direction buttons are hold-to-run. The page sends a stop command when you release the button or leave the tab.</p>
-          <ul>
-            <li>Keyboard: `W A S D` or arrow keys</li>
-            <li>Power slider only changes the next command unless a direction is active</li>
-            <li>The middle Stop button and Emergency Stop both send `STOP` immediately</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-
-    <div class="bottom">
-      <div class="log-panel">
-        <div class="label">Recent Events</div>
-        <ul id="log-list" class="log-list"></ul>
-      </div>
-
-      <div class="raw-panel">
-        <div class="label">Latest JSON</div>
-        <pre id="raw-json">{}</pre>
-      </div>
+      </main>
     </div>
   </div>
 
   <script>
-    const fields = [
-      "state", "control_direction", "motor_pwm", "control_status",
-      "delivery_result", "target_station", "cargo_door", "bridge_status",
-      "right_cm", "left_cm", "avg_cm", "diff_cm",
-      "heading_deg", "rfid_tag", "rfid_match", "fault"
-    ];
+    const fields=["state","control_direction","motor_pwm","control_status","arm_lift_deg","arm_grip_deg","arm_status","delivery_result","target_station","cargo_door","bridge_status","right_cm","left_cm","avg_cm","diff_cm","heading_deg","rfid_tag","rfid_match","fault"];
+    const keys={ArrowUp:"FORWARD",ArrowDown:"BACKWARD",ArrowLeft:"LEFT",ArrowRight:"RIGHT",w:"FORWARD",W:"FORWARD",s:"BACKWARD",S:"BACKWARD",a:"LEFT",A:"LEFT",d:"RIGHT",D:"RIGHT"};
+    const modulesKey="dashboard-module-preferences";
+    const liveDot=document.getElementById("live-dot"),liveText=document.getElementById("live-text"),rawJson=document.getElementById("raw-json"),logList=document.getElementById("log-list");
+    const toggleDrive=document.getElementById("toggle-drive"),togglePower=document.getElementById("toggle-power"),toggleArm=document.getElementById("toggle-arm");
+    const drivePanel=document.getElementById("drive-panel"),powerPanel=document.getElementById("power-panel"),armPanel=document.getElementById("arm-panel");
+    const powerSlider=document.getElementById("power-slider"),powerValue=document.getElementById("power-value"),controlFeedback=document.getElementById("control-feedback");
+    const driveButtons=[...document.querySelectorAll(".drive")],emergencyStop=document.getElementById("emergency-stop");
+    const liftSlider=document.getElementById("lift-slider"),gripSlider=document.getElementById("grip-slider"),liftValue=document.getElementById("lift-value"),gripValue=document.getElementById("grip-value"),liftRange=document.getElementById("lift-range"),gripRange=document.getElementById("grip-range"),armFeedback=document.getElementById("arm-feedback"),stepButtons=[...document.querySelectorAll(".step")];
+    let pressedDirection=null,repeatTimer=null,lastLogSignature="";
+    let controlConfig={api_path:"/api/control",default_power:96,max_power:255};
+    let armConfig={api_path:"/api/arm",min_angle_deg:0,max_angle_deg:180,default_lift_deg:110,default_grip_deg:90,step_deg:5};
 
-    const liveDot = document.getElementById("live-dot");
-    const liveText = document.getElementById("live-text");
-    const rawJson = document.getElementById("raw-json");
-    const logList = document.getElementById("log-list");
-    const powerSlider = document.getElementById("power-slider");
-    const powerValue = document.getElementById("power-value");
-    const controlFeedback = document.getElementById("control-feedback");
-    const driveButtons = Array.from(document.querySelectorAll(".drive-btn"));
-    const emergencyStopButton = document.getElementById("emergency-stop");
+    function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
+    function setLive(isLive,text){liveDot.classList.toggle("live",isLive);liveText.textContent=text}
+    function fmt(v,key){if(v===undefined||v===null||v==="")return"--";if(typeof v==="number"&&!Number.isFinite(v))return"--";if(typeof v==="number"&&key.endsWith("_cm"))return v.toFixed(1)+" cm";if(typeof v==="number"&&(key==="heading_deg"||key==="arm_lift_deg"||key==="arm_grip_deg"))return Math.round(v)+" deg";if(typeof v==="number"&&key==="motor_pwm")return v+" / "+powerSlider.max;if(typeof v==="boolean")return v?"true":"false";return String(v)}
+    function saveModules(){localStorage.setItem(modulesKey,JSON.stringify({drive:toggleDrive.checked,power:togglePower.checked,arm:toggleArm.checked}))}
+    function loadModules(){try{const raw=localStorage.getItem(modulesKey);if(!raw)return;const v=JSON.parse(raw);if(typeof v.drive==="boolean")toggleDrive.checked=v.drive;if(typeof v.power==="boolean")togglePower.checked=v.power;if(typeof v.arm==="boolean")toggleArm.checked=v.arm}catch(error){console.error(error)}}
+    function syncModules(){drivePanel.hidden=!toggleDrive.checked;powerPanel.hidden=!togglePower.checked;armPanel.hidden=!toggleArm.checked;if(!toggleDrive.checked)releaseDrive();saveModules()}
+    function updatePower(){powerValue.textContent=String(powerSlider.value)}
+    function updateArmLabels(){liftValue.textContent=liftSlider.value+" deg";gripValue.textContent=gripSlider.value+" deg"}
+    function buildLogSignature(packet){return[(packet.state||""),(packet.delivery_result||""),(packet.control_direction||""),(packet.motor_pwm??""),(packet.arm_lift_deg??""),(packet.arm_grip_deg??""),(packet.arm_status||""),(packet.fault||"")].join("|")}
+    function appendLog(packet){const sig=buildLogSignature(packet);if(sig===lastLogSignature)return;lastLogSignature=sig;const item=document.createElement("li");const title=document.createElement("div");title.className="log-title";const s=document.createElement("span");s.textContent=packet.state||"--";const r=document.createElement("span");r.textContent=packet.delivery_result||"--";title.appendChild(s);title.appendChild(r);const meta=document.createElement("div");meta.className="log-meta";meta.textContent=`Drive=${packet.control_direction||"--"}  PWM=${packet.motor_pwm??"--"}  ArmLift=${fmt(packet.arm_lift_deg,"arm_lift_deg")}  ArmGrip=${fmt(packet.arm_grip_deg,"arm_grip_deg")}  Arm=${packet.arm_status||"--"}`;item.appendChild(title);item.appendChild(meta);logList.prepend(item);while(logList.children.length>25)logList.removeChild(logList.lastChild)}
+    function syncDriveButtons(direction){driveButtons.forEach((button)=>button.classList.toggle("active",button.dataset.direction===direction&&direction!=="STOP"))}
+    function render(packet){fields.forEach((key)=>{const node=document.getElementById(key);if(node)node.textContent=fmt(packet[key],key)});if(typeof packet.motor_pwm==="number"&&!pressedDirection){powerSlider.value=String(packet.motor_pwm);updatePower()}if(typeof packet.control_direction==="string"&&!pressedDirection)syncDriveButtons(packet.control_direction.toUpperCase());if(typeof packet.arm_lift_deg==="number"&&document.activeElement!==liftSlider)liftSlider.value=String(packet.arm_lift_deg);if(typeof packet.arm_grip_deg==="number"&&document.activeElement!==gripSlider)gripSlider.value=String(packet.arm_grip_deg);updateArmLabels();rawJson.textContent=JSON.stringify(packet,null,2);setLive(true,"Live update: "+new Date().toLocaleTimeString());appendLog(packet)}
+    async function sendControl(direction,options={}){const payload={direction,power:Number(powerSlider.value),source:options.source||"dashboard"};try{const response=await fetch(controlConfig.api_path||"/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),keepalive:Boolean(options.keepalive)});const result=await response.json().catch(()=>({}));if(!response.ok||result.ok===false)throw new Error(result.message||`HTTP ${response.status}`);controlFeedback.textContent=result.message||direction+" sent"}catch(error){controlFeedback.textContent="Control request failed: "+error.message}}
+    async function sendArm(joint,angle,source){try{const response=await fetch(armConfig.api_path||"/api/arm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({joint,angle,source:source||"dashboard"})});const result=await response.json().catch(()=>({}));if(!response.ok||result.ok===false)throw new Error(result.message||`HTTP ${response.status}`);armFeedback.textContent=result.message||joint+" sent"}catch(error){armFeedback.textContent="Arm request failed: "+error.message}}
+    function clearRepeat(){if(repeatTimer){clearInterval(repeatTimer);repeatTimer=null}}
+    function releaseDrive(options={}){if(!pressedDirection&&options.skipCommand)return;pressedDirection=null;clearRepeat();syncDriveButtons("STOP");if(!options.skipCommand)void sendControl("STOP",{source:options.source||"dashboard"})}
+    function beginDrive(direction){if(!toggleDrive.checked)return;if(!direction||direction==="STOP"){releaseDrive();return}pressedDirection=direction;syncDriveButtons(direction);void sendControl(direction);clearRepeat();repeatTimer=setInterval(()=>{if(pressedDirection===direction)void sendControl(direction,{source:"dashboard-hold"})},250)}
+    function sliderForJoint(joint){return joint==="LIFT"?liftSlider:gripSlider}
+    function setJoint(joint,nextValue){const slider=sliderForJoint(joint);slider.value=String(clamp(nextValue,Number(slider.min),Number(slider.max)));updateArmLabels()}
+    function sendJoint(joint,source){const slider=sliderForJoint(joint);void sendArm(joint,Number(slider.value),source)}
+    async function loadConfig(){try{const response=await fetch("/api/config");if(!response.ok)return;const config=await response.json();if(config.manual_control){controlConfig={...controlConfig,...config.manual_control};powerSlider.max=String(controlConfig.max_power||255);powerSlider.value=String(controlConfig.default_power||96);updatePower()}if(config.arm_control){armConfig={...armConfig,...config.arm_control};[liftSlider,gripSlider].forEach((slider)=>{slider.min=String(armConfig.min_angle_deg);slider.max=String(armConfig.max_angle_deg)});liftSlider.value=String(armConfig.default_lift_deg);gripSlider.value=String(armConfig.default_grip_deg);liftRange.textContent=`${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;gripRange.textContent=`${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;updateArmLabels()}}catch(error){console.error(error)}}
+    async function loadInitial(){try{const response=await fetch("/api/state");if(!response.ok)return;const packet=await response.json();if(Object.keys(packet).length>0)render(packet)}catch(error){console.error(error)}}
+    async function loadHistory(){try{const response=await fetch("/api/history");if(!response.ok)return;const history=await response.json();logList.innerHTML="";lastLogSignature="";history.slice().reverse().forEach((packet)=>appendLog(packet))}catch(error){console.error(error)}}
+    function connectEvents(){const source=new EventSource("/events");source.onmessage=(event)=>render(JSON.parse(event.data));source.onerror=()=>setLive(false,"Disconnected, retrying...")}
 
-    const keyDirectionMap = {
-      ArrowUp: "FORWARD",
-      ArrowDown: "BACKWARD",
-      ArrowLeft: "LEFT",
-      ArrowRight: "RIGHT",
-      w: "FORWARD",
-      W: "FORWARD",
-      s: "BACKWARD",
-      S: "BACKWARD",
-      a: "LEFT",
-      A: "LEFT",
-      d: "RIGHT",
-      D: "RIGHT"
-    };
-
-    let activeDirection = "STOP";
-    let pressedDirection = null;
-    let repeatTimer = null;
-    let lastLogSignature = "";
-    let controlConfig = {
-      api_path: "/api/control",
-      default_power: 96,
-      max_power: 255
-    };
-
-    function setLive(isLive, text) {
-      liveDot.classList.toggle("live", isLive);
-      liveText.textContent = text;
-    }
-
-    function updatePowerDisplay(value) {
-      powerValue.textContent = String(value);
-    }
-
-    function formatValue(value, key) {
-      if (value === undefined || value === null || value === "") {
-        return "--";
-      }
-      if (typeof value === "number" && !Number.isFinite(value)) {
-        return "--";
-      }
-      if (typeof value === "number" && key.endsWith("_cm")) {
-        return `${value.toFixed(1)} cm`;
-      }
-      if (typeof value === "number" && key === "heading_deg") {
-        return `${value.toFixed(1)} deg`;
-      }
-      if (typeof value === "number" && key === "motor_pwm") {
-        return `${value} / ${powerSlider.max}`;
-      }
-      if (typeof value === "boolean") {
-        return value ? "true" : "false";
-      }
-      return String(value);
-    }
-
-    function buildLogSignature(packet) {
-      return [
-        packet.state || "",
-        packet.delivery_result || "",
-        packet.control_direction || "",
-        packet.motor_pwm ?? "",
-        packet.cargo_door || "",
-        packet.fault || ""
-      ].join("|");
-    }
-
-    function appendLog(packet) {
-      const signature = buildLogSignature(packet);
-      if (signature === lastLogSignature) {
-        return;
-      }
-      lastLogSignature = signature;
-
-      const item = document.createElement("li");
-      const title = document.createElement("div");
-      title.className = "log-title";
-      const stateNode = document.createElement("span");
-      stateNode.textContent = packet.state || "--";
-      const resultNode = document.createElement("span");
-      resultNode.textContent = packet.delivery_result || "--";
-      title.appendChild(stateNode);
-      title.appendChild(resultNode);
-
-      const meta = document.createElement("div");
-      meta.className = "log-meta";
-      meta.textContent =
-        `Dir=${packet.control_direction || "--"}  ` +
-        `PWM=${packet.motor_pwm ?? "--"}  ` +
-        `R=${formatValue(packet.right_cm, "right_cm")}  ` +
-        `L=${formatValue(packet.left_cm, "left_cm")}`;
-
-      item.appendChild(title);
-      item.appendChild(meta);
-      logList.prepend(item);
-
-      while (logList.children.length > 25) {
-        logList.removeChild(logList.lastChild);
-      }
-    }
-
-    function syncDriveButtons(direction) {
-      driveButtons.forEach((button) => {
-        button.classList.toggle("active", button.dataset.direction === direction && direction !== "STOP");
-      });
-    }
-
-    function render(packet) {
-      fields.forEach((key) => {
-        const node = document.getElementById(key);
-        if (node) {
-          node.textContent = formatValue(packet[key], key);
-        }
-      });
-
-      if (typeof packet.motor_pwm === "number" && !pressedDirection) {
-        powerSlider.value = String(packet.motor_pwm);
-        updatePowerDisplay(packet.motor_pwm);
-      }
-
-      if (typeof packet.control_direction === "string" && !pressedDirection) {
-        activeDirection = packet.control_direction.toUpperCase();
-        syncDriveButtons(activeDirection);
-      }
-
-      rawJson.textContent = JSON.stringify(packet, null, 2);
-      setLive(true, `Live update: ${new Date().toLocaleTimeString()}`);
-      appendLog(packet);
-    }
-
-    async function sendControl(direction, options = {}) {
-      const payload = {
-        direction,
-        power: Number(powerSlider.value),
-        source: options.source || "dashboard"
-      };
-
-      try {
-        const response = await fetch(controlConfig.api_path || "/api/control", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          keepalive: Boolean(options.keepalive)
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok || result.ok === false) {
-          throw new Error(result.message || `HTTP ${response.status}`);
-        }
-        controlFeedback.textContent = result.message || `${direction} sent`;
-      } catch (error) {
-        controlFeedback.textContent = `Control request failed: ${error.message}`;
-      }
-    }
-
-    function clearRepeatTimer() {
-      if (repeatTimer) {
-        window.clearInterval(repeatTimer);
-        repeatTimer = null;
-      }
-    }
-
-    function releaseDrive(options = {}) {
-      if (!pressedDirection && options.skipCommand) {
-        return;
-      }
-      pressedDirection = null;
-      activeDirection = "STOP";
-      clearRepeatTimer();
-      syncDriveButtons("STOP");
-      if (!options.skipCommand) {
-        void sendControl("STOP", { source: options.source || "dashboard" });
-      }
-    }
-
-    function beginDrive(direction) {
-      if (!direction || direction === "STOP") {
-        releaseDrive();
-        return;
-      }
-
-      pressedDirection = direction;
-      activeDirection = direction;
-      syncDriveButtons(direction);
-      void sendControl(direction);
-      clearRepeatTimer();
-      repeatTimer = window.setInterval(() => {
-        if (pressedDirection === direction) {
-          void sendControl(direction, { source: "dashboard-hold" });
-        }
-      }, 250);
-    }
-
-    async function loadConfig() {
-      try {
-        const response = await fetch("/api/config");
-        if (!response.ok) {
-          return;
-        }
-        const config = await response.json();
-        if (config.manual_control) {
-          controlConfig = { ...controlConfig, ...config.manual_control };
-          powerSlider.max = String(controlConfig.max_power || 255);
-          powerSlider.value = String(controlConfig.default_power || 96);
-          updatePowerDisplay(powerSlider.value);
-        }
-      } catch (error) {
-        console.error(error);
-      }
-    }
-
-    async function loadInitialState() {
-      try {
-        const response = await fetch("/api/state");
-        if (!response.ok) {
-          return;
-        }
-        const packet = await response.json();
-        if (Object.keys(packet).length > 0) {
-          render(packet);
-        }
-      } catch (error) {
-        console.error(error);
-      }
-    }
-
-    async function loadHistory() {
-      try {
-        const response = await fetch("/api/history");
-        if (!response.ok) {
-          return;
-        }
-        const history = await response.json();
-        logList.innerHTML = "";
-        lastLogSignature = "";
-        history.slice().reverse().forEach((packet) => appendLog(packet));
-      } catch (error) {
-        console.error(error);
-      }
-    }
-
-    function connectEvents() {
-      const source = new EventSource("/events");
-
-      source.onmessage = (event) => {
-        const packet = JSON.parse(event.data);
-        render(packet);
-      };
-
-      source.onerror = () => {
-        setLive(false, "Disconnected, retrying...");
-      };
-    }
-
-    driveButtons.forEach((button) => {
-      const direction = button.dataset.direction;
-      if (!direction) {
-        return;
-      }
-
-      if (direction === "STOP") {
-        button.addEventListener("click", () => releaseDrive());
-        return;
-      }
-
-      button.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        beginDrive(direction);
-        button.setPointerCapture?.(event.pointerId);
-      });
-      button.addEventListener("pointerup", () => releaseDrive());
-      button.addEventListener("pointerleave", () => releaseDrive({ skipCommand: true }));
-      button.addEventListener("pointercancel", () => releaseDrive());
-    });
-
-    emergencyStopButton.addEventListener("click", () => releaseDrive());
-
-    powerSlider.addEventListener("input", () => {
-      updatePowerDisplay(powerSlider.value);
-      if (pressedDirection) {
-        void sendControl(pressedDirection, { source: "dashboard-slider" });
-      }
-    });
-
-    window.addEventListener("blur", () => releaseDrive());
-    document.addEventListener("visibilitychange", () => {
-      if (document.hidden) {
-        releaseDrive();
-      }
-    });
-
-    window.addEventListener("beforeunload", () => {
-      releaseDrive({ source: "dashboard-unload", skipCommand: true });
-      void sendControl("STOP", { source: "dashboard-unload", keepalive: true });
-    });
-
-    window.addEventListener("keydown", (event) => {
-      const direction = keyDirectionMap[event.key];
-      if (!direction || event.repeat) {
-        if (event.code === "Space") {
-          event.preventDefault();
-          releaseDrive();
-        }
-        return;
-      }
-      event.preventDefault();
-      if (pressedDirection !== direction) {
-        beginDrive(direction);
-      }
-    });
-
-    window.addEventListener("keyup", (event) => {
-      const direction = keyDirectionMap[event.key];
-      if (!direction) {
-        return;
-      }
-      event.preventDefault();
-      if (pressedDirection === direction) {
-        releaseDrive();
-      }
-    });
-
-    loadConfig().then(() => loadInitialState());
-    loadHistory();
-    connectEvents();
+    [toggleDrive,togglePower,toggleArm].forEach((toggle)=>toggle.addEventListener("change",syncModules));
+    driveButtons.forEach((button)=>{const direction=button.dataset.direction;if(!direction)return;if(direction==="STOP"){button.addEventListener("click",()=>releaseDrive());return}button.addEventListener("pointerdown",(event)=>{event.preventDefault();beginDrive(direction);button.setPointerCapture?.(event.pointerId)});button.addEventListener("pointerup",()=>releaseDrive());button.addEventListener("pointercancel",()=>releaseDrive());button.addEventListener("pointerleave",()=>releaseDrive({skipCommand:true}))});
+    emergencyStop.addEventListener("click",()=>releaseDrive());
+    powerSlider.addEventListener("input",()=>{updatePower();if(pressedDirection)void sendControl(pressedDirection,{source:"dashboard-slider"})});
+    liftSlider.addEventListener("input",updateArmLabels);gripSlider.addEventListener("input",updateArmLabels);
+    liftSlider.addEventListener("change",()=>sendJoint("LIFT","dashboard-slider"));gripSlider.addEventListener("change",()=>sendJoint("GRIP","dashboard-slider"));
+    document.getElementById("send-lift").addEventListener("click",()=>sendJoint("LIFT","dashboard-button"));
+    document.getElementById("send-grip").addEventListener("click",()=>sendJoint("GRIP","dashboard-button"));
+    stepButtons.forEach((button)=>button.addEventListener("click",()=>{const delta=Number(button.dataset.delta||armConfig.step_deg);setJoint(button.dataset.joint,Number(sliderForJoint(button.dataset.joint).value)+delta);sendJoint(button.dataset.joint,"dashboard-step")}));
+    window.addEventListener("blur",()=>releaseDrive());document.addEventListener("visibilitychange",()=>{if(document.hidden)releaseDrive()});
+    window.addEventListener("beforeunload",()=>{releaseDrive({source:"dashboard-unload",skipCommand:true});void sendControl("STOP",{source:"dashboard-unload",keepalive:true})});
+    window.addEventListener("keydown",(event)=>{const direction=keys[event.key];if(!direction||event.repeat){if(event.code==="Space"){event.preventDefault();releaseDrive()}return}if(!toggleDrive.checked)return;event.preventDefault();if(pressedDirection!==direction)beginDrive(direction)});
+    window.addEventListener("keyup",(event)=>{const direction=keys[event.key];if(!direction)return;event.preventDefault();if(pressedDirection===direction)releaseDrive()});
+    loadModules();syncModules();loadConfig().then(()=>loadInitial());loadHistory();connectEvents();
   </script>
 </body>
 </html>

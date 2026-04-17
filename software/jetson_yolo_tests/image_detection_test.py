@@ -7,7 +7,11 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Run YOLO on one local image, save the annotated result, and show it in a window."
     )
-    parser.add_argument("--image", required=True, help="Path to the local input image.")
+    parser.add_argument(
+        "--image",
+        default="people_test.jpg",
+        help="Path to the local input image. Default: ./people_test.jpg",
+    )
     parser.add_argument(
         "--model",
         default="yolo11n.pt",

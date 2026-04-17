@@ -1,60 +1,83 @@
-# ELEC3848 AMR Project
+# ELEC3848 Group Project
 
-This repository is for the ELEC3848 Integrated Design Project.
+本仓库用于 ELEC3848 Integrated Design Project 的代码、硬件记录和 Jetson Nano 上位机部分开发。
 
-Our project is an indoor Autonomous Mobile Robot (AMR) for smart delivery. The system is intended to combine motion control, docking, station verification, cargo release, telemetry upload, and dashboard visualization into one delivery workflow.
+当前项目主线已经从 `Required Function` 阶段转到 proposal 阶段。  
+后续总体计划以根目录的 [plan.md](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/plan.md) 为准，线程交接记忆以 [agent.md](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/agent.md) 为准。
 
-## Project Goal
+## Current Status
 
-Build an AMR that can:
+### Required Function baseline
 
-- move to a target station
-- approach and dock safely
-- verify the destination
-- release the carried item
-- upload status and sensor data
-- display task status on a computer dashboard
+`Required Function` 部分已经完成，当前作为后续 proposal 实现的技术基线。  
+这一阶段主要完成了：
 
-## Planned Modules
+- 小车自动靠墙停车
+- 使用超声波和陀螺仪进行对齐修正
+- OLED 和串口状态输出
+- 多个传感器与底盘测试程序
 
-- Motion control
-- Docking and safety sensing
-- Station verification
-- Cargo release
-- Telemetry upload
-- Dashboard and task log
+主要代码位于：
+
+- [firmware/arduino/required_function_c1](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/firmware/arduino/required_function_c1)
+
+其中集成版本在：
+
+- [final_code.ino](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/firmware/arduino/required_function_c1/final_code/final_code.ino)
+- [final_code_optimized.ino](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/firmware/arduino/required_function_c1/final_code_optimized/final_code_optimized.ino)
+
+### Proposal-stage communication baseline
+
+Proposal 阶段已经搭起了 Arduino 和 Jetson Nano 之间的基础通信链路：
+
+- Arduino 通过 USB 串口发送 JSON telemetry
+- Jetson Nano 读取串口数据并提供网页 dashboard
+- Jetson Nano 提供固定密码 unlock 页面
+- Jetson Nano 可以通过串口向 Arduino 发送控制命令
+
+主要文件位于：
+
+- [firmware/arduino/proposal_amr/telemetry_serial_demo/telemetry_serial_demo.ino](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/firmware/arduino/proposal_amr/telemetry_serial_demo/telemetry_serial_demo.ino)
+- [software/jetson_dashboard/server.py](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/server.py)
+- [software/jetson_dashboard/dashboard.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/dashboard.html)
+- [software/jetson_dashboard/unlock.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/unlock.html)
+
+### Hardware records
+
+当前硬件接线和 pin 记录主要放在：
+
+- [hardware/amr_pin_mapping_template.xlsx](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/hardware/amr_pin_mapping_template.xlsx)
+
+机械臂舵机的 sample code 参考：
+
+- [firmware/arduino/singleServo/singleServo.ino](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/firmware/arduino/singleServo/singleServo.ino)
 
 ## Repository Structure
 
-Suggested structure:
+当前主要结构如下：
 
 ```text
 .
 |-- README.md
-|-- docs/
+|-- agent.md
+|-- plan.md
 |-- firmware/
+|   `-- arduino/
+|       |-- proposal_amr/
+|       |-- required_function_c1/
+|       `-- singleServo/
 |-- hardware/
+|   `-- amr_pin_mapping_template.xlsx
 |-- software/
-|-- tests/
-`-- .gitignore
+|   |-- jetson_dashboard/
+|   `-- jetson_yolo_tests/
+|-- Test_Code_24A/
+`-- reflection/
 ```
 
 ## Notes
 
-- Large reference documents are kept outside version control.
-- Local virtual environments are ignored.
-- Source code, wiring notes, setup steps, and test records should be committed here.
-
-## Team Workflow
-
-1. Create a branch for each task.
-2. Commit small, clear changes.
-3. Push to GitHub regularly.
-4. Open pull requests for review when needed.
-
-## Next Steps
-
-- add Arduino control code under `firmware/`
-- add Jetson Nano or PC-side software under `software/`
-- add wiring diagrams and hardware notes under `hardware/`
-- add test logs and validation results under `tests/`
+- `required_function_c1/` 是已完成阶段的参考基线
+- `proposal_amr/` 是后续 Arduino 主实现区
+- `software/jetson_dashboard/` 是当前 Jetson Nano 上位机主实现区
+- 较老的测试和教学参考代码放在 `Test_Code_24A/`

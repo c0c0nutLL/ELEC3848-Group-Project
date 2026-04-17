@@ -31,8 +31,14 @@ DEFAULT_UNLOCK_CONFIG = {
 }
 
 ALLOWED_DRIVE_DIRECTIONS = {"STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT"}
+ALLOWED_ARM_JOINTS = {"LIFT", "GRIP"}
 DEFAULT_DRIVE_POWER = 96
 MAX_DRIVE_POWER = 255
+MIN_ARM_ANGLE_DEG = 0
+MAX_ARM_ANGLE_DEG = 180
+DEFAULT_ARM_LIFT_DEG = 110
+DEFAULT_ARM_GRIP_DEG = 90
+ARM_ACTIVE_WINDOW_MS = 1200
 MOCK_UNLOCK_OPEN_MS = 5000
 MOCK_DISTANCE_MIN_CM = 8.0
 MOCK_DISTANCE_MAX_CM = 150.0
@@ -41,6 +47,7 @@ state_lock = threading.Lock()
 clients_lock = threading.Lock()
 unlock_lock = threading.Lock()
 control_lock = threading.Lock()
+arm_lock = threading.Lock()
 
 latest_state = {}  # type: Dict[str, Any]
 state_history = deque(maxlen=100)  # type: Deque[Dict[str, Any]]
@@ -56,6 +63,13 @@ mock_unlock_until_ms = 0
 control_state = {
     "direction": "STOP",
     "power": DEFAULT_DRIVE_POWER,
+    "status": "IDLE",
+    "source": "server",
+    "last_command_ms": 0,
+}  # type: Dict[str, Any]
+arm_state = {
+    "lift_deg": DEFAULT_ARM_LIFT_DEG,
+    "grip_deg": DEFAULT_ARM_GRIP_DEG,
     "status": "IDLE",
     "source": "server",
     "last_command_ms": 0,
@@ -102,6 +116,21 @@ def normalize_power(raw_power: Any) -> int:
     return clamp(power, 0, MAX_DRIVE_POWER)
 
 
+def normalize_arm_joint(raw_joint: Any) -> str:
+    joint = str(raw_joint or "").strip().upper()
+    if joint not in ALLOWED_ARM_JOINTS:
+        raise ValueError(f"joint must be one of {sorted(ALLOWED_ARM_JOINTS)}")
+    return joint
+
+
+def normalize_arm_angle(raw_angle: Any) -> int:
+    try:
+        angle = int(raw_angle)
+    except (TypeError, ValueError):
+        raise ValueError("angle must be an integer") from None
+    return clamp(angle, MIN_ARM_ANGLE_DEG, MAX_ARM_ANGLE_DEG)
+
+
 def build_control_patch() -> Dict[str, Any]:
     with control_lock:
         return {
@@ -126,6 +155,30 @@ def set_control_state(direction: str, power: int, status: str, source: str) -> D
             }
         )
     return build_control_patch()
+
+
+def build_arm_patch() -> Dict[str, Any]:
+    with arm_lock:
+        return {
+            "arm_lift_deg": arm_state["lift_deg"],
+            "arm_grip_deg": arm_state["grip_deg"],
+            "arm_status": arm_state["status"],
+            "arm_source": arm_state["source"],
+            "arm_last_command_ms": arm_state["last_command_ms"] or None,
+        }
+
+
+def set_arm_state(joint: str, angle: int, status: str, source: str) -> Dict[str, Any]:
+    now_ms = current_time_ms()
+    with arm_lock:
+        if joint == "LIFT":
+            arm_state["lift_deg"] = angle
+        elif joint == "GRIP":
+            arm_state["grip_deg"] = angle
+        arm_state["status"] = status
+        arm_state["source"] = source
+        arm_state["last_command_ms"] = now_ms
+    return build_arm_patch()
 
 
 def broadcast_state(packet: Dict[str, Any]) -> None:
@@ -284,6 +337,45 @@ def trigger_manual_drive(
     )
 
 
+def trigger_arm_control(
+    joint_raw: Any,
+    angle_raw: Any,
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    try:
+        joint = normalize_arm_joint(joint_raw)
+        angle = normalize_arm_angle(angle_raw)
+    except ValueError as exc:
+        return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    command = f"ARM {joint} {angle}"
+    if not queue_serial_command(command):
+        return False, {"ok": False, "message": "command queue is full"}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    patch_state(
+        {
+            **set_arm_state(joint, angle, "ACTIVE", source),
+            "arm_message": f"{joint.lower()} set to {angle} deg",
+            "arm_last_client": client_ip,
+            "fault": "",
+        },
+        add_history=True,
+    )
+
+    return (
+        True,
+        {
+            "ok": True,
+            "message": f"{joint.lower()} set to {angle} deg",
+            "command": command,
+            "joint": joint,
+            "angle": angle,
+        },
+        HTTPStatus.OK,
+    )
+
+
 def serial_reader_loop(port: str, baudrate: int) -> None:
     if serial is None:
         raise RuntimeError("pyserial is not installed")
@@ -314,6 +406,9 @@ def serial_reader_loop(port: str, baudrate: int) -> None:
                 "bridge_status": "DISCONNECTED",
                 "control_direction": "STOP",
                 "control_status": "OFFLINE",
+                "arm_lift_deg": None,
+                "arm_grip_deg": None,
+                "arm_status": "OFFLINE",
                 "right_cm": None,
                 "left_cm": None,
                 "avg_cm": None,
@@ -333,6 +428,15 @@ def mock_reader_loop() -> None:
             control_status = str(control_state["status"])
             control_source = str(control_state["source"])
             control_last_command_ms = int(control_state["last_command_ms"])
+        with arm_lock:
+            arm_lift_deg = int(arm_state["lift_deg"])
+            arm_grip_deg = int(arm_state["grip_deg"])
+            arm_source = str(arm_state["source"])
+            arm_last_command_ms = int(arm_state["last_command_ms"])
+
+        arm_status = "IDLE"
+        if arm_last_command_ms > 0 and current_time_ms() - arm_last_command_ms < ARM_ACTIVE_WINDOW_MS:
+            arm_status = "ACTIVE"
 
         right_cm = mock_sensor_state["right_cm"]
         left_cm = mock_sensor_state["left_cm"]
@@ -382,6 +486,11 @@ def mock_reader_loop() -> None:
             "control_status": control_status,
             "control_source": control_source,
             "control_last_command_ms": control_last_command_ms or None,
+            "arm_lift_deg": arm_lift_deg,
+            "arm_grip_deg": arm_grip_deg,
+            "arm_status": arm_status,
+            "arm_source": arm_source,
+            "arm_last_command_ms": arm_last_command_ms or None,
         }
         update_state(packet)
         time.sleep(0.2)
@@ -502,6 +611,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.handle_control_post()
             return
 
+        if parsed.path == "/api/arm":
+            self.handle_arm_post()
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -549,6 +662,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "directions": sorted(ALLOWED_DRIVE_DIRECTIONS),
                 "default_power": DEFAULT_DRIVE_POWER,
                 "max_power": MAX_DRIVE_POWER,
+            },
+            "arm_control": {
+                "api_path": "/api/arm",
+                "joints": sorted(ALLOWED_ARM_JOINTS),
+                "min_angle_deg": MIN_ARM_ANGLE_DEG,
+                "max_angle_deg": MAX_ARM_ANGLE_DEG,
+                "default_lift_deg": DEFAULT_ARM_LIFT_DEG,
+                "default_grip_deg": DEFAULT_ARM_GRIP_DEG,
+                "step_deg": 5,
             },
         }
         self.send_json(payload)
@@ -622,10 +744,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         ok, payload, status = trigger_manual_drive(direction, power, client_ip, source=source)
         self.send_json(payload, status)
 
+    def handle_arm_post(self) -> None:
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        joint = data.get("joint", "")
+        angle = data.get("angle")
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_arm_control(joint, angle, client_ip, source=source)
+        self.send_json(payload, status)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Jetson Nano serial telemetry dashboard")
-    parser.add_argument("--serial", default="/dev/ttyACM0", help="Arduino serial device path")
+    parser.add_argument("--serial", default="/dev/tty/USB0", help="Arduino serial device path")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--host", default="0.0.0.0", help="HTTP bind host")
     parser.add_argument("--http-port", type=int, default=8080, help="HTTP port")
@@ -652,6 +788,7 @@ def main() -> None:
         "unlock_status": "IDLE",
         "unlock_message": "",
         **build_control_patch(),
+        **build_arm_patch(),
     })
 
     worker = threading.Thread(

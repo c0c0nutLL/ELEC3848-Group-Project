@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Servo.h>
 #include <string.h>
 
 // Motor pin mapping reused from required_function_c1 reference sketches.
@@ -38,17 +39,24 @@ const uint8_t ULTRASONIC_RIGHT_TRIG_PIN = 6;
 const uint8_t ULTRASONIC_RIGHT_ECHO_PIN = 4;
 const uint8_t ULTRASONIC_LEFT_TRIG_PIN = 10;
 const uint8_t ULTRASONIC_LEFT_ECHO_PIN = 7;
+const uint8_t ARM_GRIP_SERVO_PIN = 44;
+const uint8_t ARM_LIFT_SERVO_PIN = 45;
 
 const unsigned long TELEMETRY_INTERVAL_MS = 200UL;
 const unsigned long DISTANCE_SAMPLE_INTERVAL_MS = 100UL;
 const unsigned long COMMAND_TIMEOUT_MS = 700UL;
+const unsigned long ARM_ACTIVE_WINDOW_MS = 1200UL;
 const unsigned long REMOTE_UNLOCK_OPEN_MS = 5000UL;
 const unsigned long ULTRASONIC_TIMEOUT_US = 30000UL;
 
 const char *TARGET_STATION = "MANUAL";
 const int DEFAULT_MOTOR_PWM = 96;
+const int DEFAULT_ARM_GRIP_DEG = 90;
+const int DEFAULT_ARM_LIFT_DEG = 110;
 const int MIN_MOTOR_PWM = 0;
 const int MAX_MOTOR_PWM = 255;
+const int MIN_ARM_DEG = 0;
+const int MAX_ARM_DEG = 180;
 const float LEFT_SIDE_TRIM = 1.10f;
 
 enum DriveDirection {
@@ -67,15 +75,21 @@ struct DistanceSnapshot {
 unsigned long lastTelemetryMs = 0;
 unsigned long lastDistanceSampleMs = 0;
 unsigned long lastDriveCommandMs = 0;
+unsigned long lastArmCommandMs = 0;
 unsigned long remoteUnlockUntilMs = 0;
 
 DriveDirection currentDirection = DRIVE_STOP;
 bool commandTimedOut = false;
 int motorPwm = DEFAULT_MOTOR_PWM;
+int currentArmGripDeg = DEFAULT_ARM_GRIP_DEG;
+int currentArmLiftDeg = DEFAULT_ARM_LIFT_DEG;
 
 DistanceSnapshot latestDistances = {-1.0f, -1.0f};
 float latestAverageCm = -1.0f;
 float latestDiffCm = -1.0f;
+
+Servo armGripServo;
+Servo armLiftServo;
 
 char commandBuffer[48];
 uint8_t commandLength = 0;
@@ -157,6 +171,13 @@ void setupUltrasonics() {
 
   digitalWrite(ULTRASONIC_RIGHT_TRIG_PIN, LOW);
   digitalWrite(ULTRASONIC_LEFT_TRIG_PIN, LOW);
+}
+
+void setupArm() {
+  armGripServo.attach(ARM_GRIP_SERVO_PIN);
+  armLiftServo.attach(ARM_LIFT_SERVO_PIN);
+  armGripServo.write(currentArmGripDeg);
+  armLiftServo.write(currentArmLiftDeg);
 }
 
 void driveCurrentDirection() {
@@ -269,6 +290,13 @@ const char *controlStatus() {
   return "IDLE";
 }
 
+const char *armStatus() {
+  if (lastArmCommandMs > 0 && millis() - lastArmCommandMs < ARM_ACTIVE_WINDOW_MS) {
+    return "ACTIVE";
+  }
+  return "IDLE";
+}
+
 void applyDriveCommand(DriveDirection direction, int requestedPwm) {
   motorPwm = constrain(requestedPwm, MIN_MOTOR_PWM, MAX_MOTOR_PWM);
   if (direction != DRIVE_STOP && motorPwm == 0) {
@@ -279,6 +307,19 @@ void applyDriveCommand(DriveDirection direction, int requestedPwm) {
   commandTimedOut = false;
   clearFault();
   driveCurrentDirection();
+}
+
+void applyArmCommand(const char *joint, int requestedDeg) {
+  int angle = constrain(requestedDeg, MIN_ARM_DEG, MAX_ARM_DEG);
+  if (strcmp(joint, "GRIP") == 0) {
+    currentArmGripDeg = angle;
+    armGripServo.write(currentArmGripDeg);
+  } else {
+    currentArmLiftDeg = angle;
+    armLiftServo.write(currentArmLiftDeg);
+  }
+  lastArmCommandMs = millis();
+  clearFault();
 }
 
 float readDistanceCm(uint8_t trigPin, uint8_t echoPin) {
@@ -408,6 +449,18 @@ void emitTelemetry() {
   printJsonString(controlStatus());
   Serial.print(',');
 
+  Serial.print("\"arm_lift_deg\":");
+  Serial.print(currentArmLiftDeg);
+  Serial.print(',');
+
+  Serial.print("\"arm_grip_deg\":");
+  Serial.print(currentArmGripDeg);
+  Serial.print(',');
+
+  Serial.print("\"arm_status\":");
+  printJsonString(armStatus());
+  Serial.print(',');
+
   Serial.print("\"command_age_ms\":");
   if (lastDriveCommandMs == 0) {
     Serial.print("null");
@@ -467,6 +520,28 @@ void handleCommand(const char *command) {
     return;
   }
 
+  if (strcmp(token, "ARM") == 0) {
+    char *jointToken = strtok(NULL, " ");
+    char *angleToken = strtok(NULL, " ");
+    if (jointToken == NULL || angleToken == NULL) {
+      setFault("BAD_ARM_COMMAND");
+      return;
+    }
+
+    int requestedDeg = atoi(angleToken);
+    if (strcmp(jointToken, "LIFT") == 0) {
+      applyArmCommand("LIFT", requestedDeg);
+      return;
+    }
+    if (strcmp(jointToken, "GRIP") == 0) {
+      applyArmCommand("GRIP", requestedDeg);
+      return;
+    }
+
+    setFault("BAD_ARM_JOINT");
+    return;
+  }
+
   setFault("UNKNOWN_COMMAND");
 }
 
@@ -501,6 +576,8 @@ void printHelp() {
   Serial.println("  DRIVE LEFT <0-255>");
   Serial.println("  DRIVE RIGHT <0-255>");
   Serial.println("  DRIVE STOP <0-255>");
+  Serial.println("  ARM LIFT <0-180>");
+  Serial.println("  ARM GRIP <0-180>");
   Serial.println("  OPEN_DOOR");
 }
 
@@ -508,6 +585,7 @@ void setup() {
   Serial.begin(115200);
   setupMotorPins();
   setupUltrasonics();
+  setupArm();
   stopCar();
   delay(1500);
   printHelp();

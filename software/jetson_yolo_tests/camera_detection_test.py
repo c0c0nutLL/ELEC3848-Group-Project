@@ -3,6 +3,34 @@ import sys
 import time
 
 
+def gstreamer_pipeline(
+    sensor_id=0,
+    capture_width=1280,
+    capture_height=720,
+    display_width=1280,
+    display_height=720,
+    framerate=30,
+    flip_method=0,
+):
+    return (
+        "nvarguscamerasrc sensor-id=%d ! "
+        "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
+        "nvvidconv flip-method=%d ! "
+        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+        % (
+            sensor_id,
+            capture_width,
+            capture_height,
+            framerate,
+            flip_method,
+            display_width,
+            display_height,
+        )
+    )
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Run real-time YOLO detection on a camera stream and show FPS in the top-left corner."
@@ -10,7 +38,7 @@ def parse_args():
     parser.add_argument(
         "--camera",
         default="/dev/video0",
-        help="Camera device path or camera index string. Default: /dev/video0",
+        help="Camera input selector. Default: /dev/video0, which maps to CSI sensor 0.",
     )
     parser.add_argument(
         "--model",
@@ -40,6 +68,18 @@ def parse_args():
         type=int,
         default=720,
         help="Requested camera height.",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=30,
+        help="Requested CSI camera framerate.",
+    )
+    parser.add_argument(
+        "--flip-method",
+        type=int,
+        default=0,
+        help="GStreamer nvvidconv flip-method for the CSI camera.",
     )
     parser.add_argument(
         "--yolo-device",
@@ -72,12 +112,33 @@ def import_dependencies():
     return cv2, YOLO
 
 
-def open_camera(cv2, camera_path, width, height):
-    backend = cv2.CAP_V4L2 if hasattr(cv2, "CAP_V4L2") else 0
-    capture = cv2.VideoCapture(camera_path, backend)
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    return capture
+def parse_sensor_id(camera_path):
+    camera_value = str(camera_path).strip()
+    if camera_value in ("", "/dev/video0", "0"):
+        return 0
+    if camera_value.startswith("/dev/video") and camera_value[len("/dev/video"):].isdigit():
+        return int(camera_value[len("/dev/video"):])
+    if camera_value.isdigit():
+        return int(camera_value)
+    raise ValueError(
+        "Unsupported camera input '{}'. Use /dev/video0, /dev/video1, or a numeric CSI sensor id.".format(
+            camera_path
+        )
+    )
+
+
+def open_camera(cv2, camera_path, width, height, fps, flip_method):
+    sensor_id = parse_sensor_id(camera_path)
+    pipeline = gstreamer_pipeline(
+        sensor_id=sensor_id,
+        capture_width=width,
+        capture_height=height,
+        display_width=width,
+        display_height=height,
+        framerate=fps,
+        flip_method=flip_method,
+    )
+    return cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
 
 
 def draw_fps(cv2, frame, fps_value):
@@ -99,9 +160,21 @@ def main():
     cv2, YOLO = import_dependencies()
 
     model = YOLO(args.model)
-    capture = open_camera(cv2, args.camera, args.width, args.height)
+    try:
+        capture = open_camera(
+            cv2,
+            args.camera,
+            args.width,
+            args.height,
+            args.fps,
+            args.flip_method,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        sys.exit(1)
+
     if not capture.isOpened():
-        print("Failed to open camera: {}".format(args.camera))
+        print("Failed to open CSI camera for input: {}".format(args.camera))
         sys.exit(1)
 
     predict_kwargs = {

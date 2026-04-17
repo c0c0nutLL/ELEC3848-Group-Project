@@ -39,9 +39,10 @@ Single image:
 
 ```bash
 python3 image_detection_test.py \
-  --image /path/to/input.jpg \
   --model yolo11n.pt
 ```
+
+If `--image` is omitted, the script uses `./people_test.jpg`.
 
 USB camera:
 
@@ -50,6 +51,9 @@ python3 camera_detection_test.py \
   --camera /dev/video0 \
   --model yolo11n.pt
 ```
+
+If `--camera` is omitted, the script uses `/dev/video0`.
+In the current Jetson setup, that default is interpreted as CSI sensor `0` and opened through the GStreamer pipeline used in `software/camera_test.py`.
 
 If you later export TensorRT, the same scripts can also use:
 
