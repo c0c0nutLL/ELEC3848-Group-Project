@@ -2,6 +2,21 @@
 
 Optimized Arduino sketch for the ELEC3848 required function.
 
+## Deprecation Notice
+
+This optimized branch is now a historical reference only.
+
+Reason:
+
+- it depends on the removed left/right side ultrasonic sensors
+- it also reflects an older corridor-guidance assumption that is no longer used
+
+Current hardware-valid straight-line work should use:
+
+- gyro heading hold
+- motor PWM trim / per-wheel compensation
+- the remaining front ultrasonic pair only for docking / parking / near-range safety
+
 Main sketch:
 - `final_code_optimized.ino`
 

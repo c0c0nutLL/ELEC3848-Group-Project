@@ -5,31 +5,180 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AMR Telemetry Dashboard</title>
   <style>
-    :root{--bg:#f3f1ea;--panel:#fffdf8;--line:#d7d1c4;--text:#1d1c19;--muted:#6d675c;--accent:#206a5d;--warn:#c0542f;--shadow:0 10px 30px rgba(29,28,25,.05)}
-    *{box-sizing:border-box}body{margin:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;background:radial-gradient(circle at top left,#fff5d9 0,transparent 28%),radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),var(--bg);color:var(--text)}
-    button,input{font:inherit}a{text-decoration:none;color:inherit}[hidden]{display:none!important}
-    .page{max-width:1380px;margin:0 auto;padding:24px}.hero,.panel-head,.title-row,.arm-head,.log-title{display:flex;justify-content:space-between;gap:12px;align-items:center}
-    .hero{margin-bottom:16px}.hero h1,.panel-head h2,.module h3{margin:0}.hero p,.sub,.hint,.sidebar p,.log-meta{margin:6px 0 0;color:var(--muted);line-height:1.5}
-    .pill,.btn,.mini,.step,.apply,.drive{border:1px solid var(--line);background:var(--panel);border-radius:999px;box-shadow:var(--shadow)}
-    .pill{display:inline-flex;align-items:center;gap:10px;padding:10px 14px}.dot{width:10px;height:10px;border-radius:50%;background:var(--warn)}.dot.live{background:var(--accent)}
-    .layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px}.sidebar,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
-    .sidebar{padding:16px;position:sticky;top:18px}.content{display:grid;gap:16px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
-    .toggle{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55);margin-top:10px}
-    .switch{position:relative;width:50px;height:28px;flex:0 0 auto}.switch input{position:absolute;inset:0;opacity:0}.track{position:absolute;inset:0;border-radius:999px;background:#d8d1c4}.track:after{content:"";position:absolute;width:20px;height:20px;left:4px;top:4px;border-radius:50%;background:#fff;transition:transform .12s ease}
-    .switch input:checked+.track{background:rgba(32,106,93,.72)}.switch input:checked+.track:after{transform:translateX(22px)}
-    .panel{padding:16px}.mini,.btn,.step,.apply{display:inline-flex;align-items:center;justify-content:center;padding:9px 13px;cursor:pointer}.mini{font-size:13px}
-    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}.card,.module,.arm-card{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55)}
-    .card{padding:14px}.value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}.small{font-size:17px}
-    .stack{display:grid;gap:14px}.module{padding:16px}.pad-wrap,.power-wrap{display:grid;grid-template-columns:minmax(240px,1fr) minmax(220px,280px);gap:16px;align-items:center}
+    :root{
+      --bg:#f3f1ea;
+      --panel:#fffdf8;
+      --line:#d7d1c4;
+      --text:#1d1c19;
+      --muted:#6d675c;
+      --accent:#206a5d;
+      --warn:#c0542f;
+      --shadow:0 10px 30px rgba(29,28,25,.05)
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+      background:
+        radial-gradient(circle at top left,#fff5d9 0,transparent 28%),
+        radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),
+        var(--bg);
+      color:var(--text)
+    }
+    button,input{font:inherit}
+    a{text-decoration:none;color:inherit}
+    [hidden]{display:none!important}
+    button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
+    .page{max-width:1380px;margin:0 auto;padding:24px}
+    .hero,.panel-head,.title-row,.arm-head,.log-title,.mode-actions,.task-meta,.power-meta{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center
+    }
+    .hero{margin-bottom:16px}
+    .hero h1,.panel-head h2,.module h3{margin:0}
+    .hero p,.sub,.hint,.sidebar p,.log-meta{margin:6px 0 0;color:var(--muted);line-height:1.5}
+    .pill,.btn,.mini,.step,.apply,.drive{
+      border:1px solid var(--line);
+      background:var(--panel);
+      border-radius:999px;
+      box-shadow:var(--shadow)
+    }
+    .pill{display:inline-flex;align-items:center;gap:10px;padding:10px 14px}
+    .dot{width:10px;height:10px;border-radius:50%;background:var(--warn)}
+    .dot.live{background:var(--accent)}
+    .layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px}
+    .sidebar,.panel{
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:18px;
+      box-shadow:var(--shadow)
+    }
+    .sidebar{padding:16px;position:sticky;top:18px}
+    .content{display:grid;gap:16px}
+    .label{
+      font-size:12px;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      margin-bottom:8px
+    }
+    .toggle{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+      padding:12px;
+      border:1px solid var(--line);
+      border-radius:14px;
+      background:rgba(255,255,255,.55);
+      margin-top:10px
+    }
+    .switch{position:relative;width:50px;height:28px;flex:0 0 auto}
+    .switch input{position:absolute;inset:0;opacity:0}
+    .track{position:absolute;inset:0;border-radius:999px;background:#d8d1c4}
+    .track:after{
+      content:"";
+      position:absolute;
+      width:20px;
+      height:20px;
+      left:4px;
+      top:4px;
+      border-radius:50%;
+      background:#fff;
+      transition:transform .12s ease
+    }
+    .switch input:checked + .track{background:rgba(32,106,93,.72)}
+    .switch input:checked + .track:after{transform:translateX(22px)}
+    .panel{padding:16px}
+    .mini,.btn,.step,.apply{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:9px 13px;
+      cursor:pointer
+    }
+    .mini{font-size:13px}
+    .btn{font-weight:700}
+    .btn.primary{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.3);color:var(--accent)}
+    .btn.warn{background:#fff3ed;border-color:rgba(192,84,47,.24);color:var(--warn)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
+    .card,.module,.arm-card{
+      border:1px solid var(--line);
+      border-radius:14px;
+      background:rgba(255,255,255,.55)
+    }
+    .card{padding:14px}
+    .value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}
+    .small{font-size:17px}
+    .stack{display:grid;gap:14px}
+    .module{padding:16px}
+    .task-grid{display:grid;grid-template-columns:minmax(280px,1.1fr) minmax(240px,.9fr);gap:16px}
+    .task-box{
+      padding:16px;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:#f8faf7
+    }
+    .mode-actions{flex-wrap:wrap;align-items:flex-start}
+    .task-meta{align-items:flex-start}
+    .task-note{
+      min-height:64px;
+      padding:14px;
+      border-radius:14px;
+      border:1px dashed var(--line);
+      background:rgba(255,255,255,.72)
+    }
+    .task-note strong{display:block;margin-bottom:6px}
+    .pad-wrap,.power-wrap{display:grid;grid-template-columns:minmax(240px,1fr) minmax(220px,280px);gap:16px;align-items:center}
     .pad{display:grid;grid-template-columns:repeat(3,minmax(72px,1fr));grid-template-areas:". up ." "left stop right" ". down .";gap:10px;min-height:220px}
-    .drive{min-height:70px;border-radius:18px;cursor:pointer;font-weight:700}.drive.up{grid-area:up}.drive.left{grid-area:left}.drive.stop{grid-area:stop;background:#fff3ed;color:var(--warn)}.drive.right{grid-area:right}.drive.down{grid-area:down}.drive.active{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.45)}
-    .stop-wide{width:100%;margin-top:12px;padding:11px 14px;border-radius:999px;border:1px solid rgba(192,84,47,.24);background:#fff3ed;color:var(--warn);font-weight:700;box-shadow:var(--shadow);cursor:pointer}
-    .power-box,.arm-card{padding:16px;background:#f8faf7}.power-meta,.arm-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}.power-num,.arm-num{font-size:30px;font-weight:700}.slider{width:100%;accent-color:var(--accent)}
-    .arm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.arm-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}.apply{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.3);color:var(--accent);font-weight:700}
-    .bottom{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.log-list{list-style:none;padding:0;margin:0;display:grid;gap:10px;max-height:420px;overflow:auto}.log-list li{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55)}
-    pre{margin:0;padding:14px;border-radius:14px;border:1px solid var(--line);background:#f7f4ed;overflow:auto;min-height:240px}
-    @media (max-width:1100px){.layout,.pad-wrap,.power-wrap,.bottom{grid-template-columns:1fr}.sidebar{position:static}}
-    @media (max-width:780px){.arm-grid{grid-template-columns:1fr}.hero,.panel-head{flex-direction:column;align-items:flex-start}.page{padding:18px}}
+    .drive{min-height:70px;border-radius:18px;cursor:pointer;font-weight:700}
+    .drive.up{grid-area:up}
+    .drive.left{grid-area:left}
+    .drive.stop{grid-area:stop;background:#fff3ed;color:var(--warn)}
+    .drive.right{grid-area:right}
+    .drive.down{grid-area:down}
+    .drive.active{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.45)}
+    .stop-wide{
+      width:100%;
+      margin-top:12px;
+      padding:11px 14px;
+      border-radius:999px;
+      border:1px solid rgba(192,84,47,.24);
+      background:#fff3ed;
+      color:var(--warn);
+      font-weight:700;
+      box-shadow:var(--shadow);
+      cursor:pointer
+    }
+    .power-box,.arm-card{padding:16px;background:#f8faf7}
+    .power-num,.arm-num{font-size:30px;font-weight:700}
+    .slider{width:100%;accent-color:var(--accent)}
+    .arm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .arm-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+    .apply{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.3);color:var(--accent);font-weight:700}
+    .bottom{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}
+    .log-list{list-style:none;padding:0;margin:0;display:grid;gap:10px;max-height:420px;overflow:auto}
+    .log-list li{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55)}
+    pre{
+      margin:0;
+      padding:14px;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background:#f7f4ed;
+      overflow:auto;
+      min-height:240px
+    }
+    @media (max-width:1100px){
+      .layout,.task-grid,.pad-wrap,.power-wrap,.bottom{grid-template-columns:1fr}
+      .sidebar{position:static}
+    }
+    @media (max-width:780px){
+      .arm-grid{grid-template-columns:1fr}
+      .hero,.panel-head,.task-meta{flex-direction:column;align-items:flex-start}
+      .page{padding:18px}
+    }
   </style>
 </head>
 <body>
@@ -39,14 +188,22 @@
         <h1>AMR Telemetry Dashboard</h1>
         <p>Arduino -> USB Serial -> Jetson Nano -> Browser</p>
       </div>
-      <div class="pill"><span id="live-dot" class="dot"></span><span id="live-text">Waiting for data</span></div>
+      <div class="pill">
+        <span id="live-dot" class="dot"></span>
+        <span id="live-text">Waiting for data</span>
+      </div>
     </div>
 
     <div class="layout">
       <aside class="sidebar">
         <div class="label">Control Sidebar</div>
         <h2>Module Switches</h2>
-        <p>Turn modules on to show their control UI. Turning a module off hides its controls.</p>
+        <p>Turn modules on to show or hide their panels.</p>
+
+        <label class="toggle" for="toggle-auto">
+          <div><strong>Auto Task</strong><div class="sub">Interrupt / resume controls</div></div>
+          <span class="switch"><input id="toggle-auto" type="checkbox" checked><span class="track"></span></span>
+        </label>
 
         <label class="toggle" for="toggle-drive">
           <div><strong>Vehicle Direction</strong><div class="sub">Drive pad and emergency stop</div></div>
@@ -70,13 +227,19 @@
             <div>
               <div class="label">Status Monitor</div>
               <h2>Live Robot Status</h2>
-              <p class="sub">Monitor drive state, arm state, telemetry, and bridge health.</p>
+              <p class="sub">Monitor run mode, auto stage, drive state, arm state, telemetry, and bridge health.</p>
             </div>
             <a class="mini" href="/unlock">Password Unlock</a>
           </div>
 
           <div class="cards">
             <div class="card"><div class="label">State</div><div id="state" class="value">--</div></div>
+            <div class="card"><div class="label">Current Mode</div><div id="current_mode" class="value">--</div></div>
+            <div class="card"><div class="label">Auto Stage</div><div id="current_auto_stage" class="value small">--</div></div>
+            <div class="card"><div class="label">Saved Stage</div><div id="saved_auto_stage" class="value small">--</div></div>
+            <div class="card"><div class="label">Resume Pending</div><div id="resume_pending" class="value">--</div></div>
+            <div class="card"><div class="label">Task Active</div><div id="task_active" class="value">--</div></div>
+            <div class="card"><div class="label">Resume Note</div><div id="resume_note" class="value small">--</div></div>
             <div class="card"><div class="label">Drive Direction</div><div id="control_direction" class="value">--</div></div>
             <div class="card"><div class="label">Motor Power</div><div id="motor_pwm" class="value">--</div></div>
             <div class="card"><div class="label">Drive Status</div><div id="control_status" class="value">--</div></div>
@@ -102,11 +265,33 @@
           <div class="panel-head">
             <div>
               <div class="label">Control Workspace</div>
-              <h2>Manual Robot Control</h2>
+              <h2>Task And Manual Control</h2>
             </div>
           </div>
 
           <div class="stack">
+            <section id="auto-panel" class="module">
+              <div class="label">Auto Task</div>
+              <h3>Interrupt / Resume Control</h3>
+              <div class="task-grid">
+                <div class="task-box">
+                  <div class="mode-actions">
+                    <button id="start-task" class="btn primary" type="button">Start Auto Task</button>
+                    <button id="take-manual" class="btn" type="button">Take Manual Control</button>
+                    <button id="resume-task" class="btn primary" type="button">Return To Auto / Resume Task</button>
+                    <button id="abort-task" class="btn warn" type="button">Cancel Resume / Abort Task</button>
+                  </div>
+                  <p class="hint">Manual drive and arm control are only enabled while `MANUAL_OVERRIDE` is active when the interrupt/resume sketch is connected.</p>
+                </div>
+                <div class="task-box">
+                  <div class="task-note">
+                    <strong id="mode-feedback-title">Mode Feedback</strong>
+                    <div id="mode-feedback" class="sub">Waiting for interrupt/resume telemetry.</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <section id="drive-panel" class="module">
               <div class="label">Vehicle Direction</div>
               <h3>Drive Pad</h3>
@@ -123,7 +308,7 @@
                 </div>
                 <div>
                   <p id="control-feedback" class="hint">Hold a direction button to move. Release to stop.</p>
-                  <p class="hint">Keyboard: `W A S D` or arrow keys. Space bar sends `STOP` immediately.</p>
+                  <p class="hint">Keyboard: `W A S D` or arrow keys. Space bar sends `STOP` immediately while manual control is enabled.</p>
                 </div>
               </div>
             </section>
@@ -133,7 +318,10 @@
               <h3>PWM Output</h3>
               <div class="power-wrap">
                 <div class="power-box">
-                  <div class="power-meta"><div id="power-value" class="power-num">96</div><div class="sub">PWM</div></div>
+                  <div class="power-meta">
+                    <div id="power-value" class="power-num">96</div>
+                    <div class="sub">PWM</div>
+                  </div>
                   <input id="power-slider" class="slider" type="range" min="0" max="255" value="96">
                 </div>
                 <p class="hint">Changing this slider updates the next drive command. If the drive pad is active, the new PWM is sent immediately.</p>
@@ -145,7 +333,13 @@
               <h3>Two-Servo Arm Control</h3>
               <div class="arm-grid">
                 <div class="arm-card">
-                  <div class="arm-head"><div><div class="label">Lift Servo</div><div id="lift-value" class="arm-num">110 deg</div></div><div id="lift-range" class="sub">0 - 180 deg</div></div>
+                  <div class="arm-head">
+                    <div>
+                      <div class="label">Lift Servo</div>
+                      <div id="lift-value" class="arm-num">110 deg</div>
+                    </div>
+                    <div id="lift-range" class="sub">0 - 180 deg</div>
+                  </div>
                   <input id="lift-slider" class="slider" type="range" min="0" max="180" value="110">
                   <div class="arm-actions">
                     <button class="step" type="button" data-joint="LIFT" data-delta="-5">Lift -5</button>
@@ -154,7 +348,13 @@
                   </div>
                 </div>
                 <div class="arm-card">
-                  <div class="arm-head"><div><div class="label">Gripper Servo</div><div id="grip-value" class="arm-num">90 deg</div></div><div id="grip-range" class="sub">0 - 180 deg</div></div>
+                  <div class="arm-head">
+                    <div>
+                      <div class="label">Gripper Servo</div>
+                      <div id="grip-value" class="arm-num">90 deg</div>
+                    </div>
+                    <div id="grip-range" class="sub">0 - 180 deg</div>
+                  </div>
                   <input id="grip-slider" class="slider" type="range" min="0" max="180" value="90">
                   <div class="arm-actions">
                     <button class="step" type="button" data-joint="GRIP" data-delta="-5">Grip -5</button>
@@ -185,58 +385,552 @@
   </div>
 
   <script>
-    const fields=["state","control_direction","motor_pwm","control_status","arm_lift_deg","arm_grip_deg","arm_status","delivery_result","target_station","cargo_door","bridge_status","right_cm","left_cm","avg_cm","diff_cm","heading_deg","rfid_tag","rfid_match","fault"];
-    const keys={ArrowUp:"FORWARD",ArrowDown:"BACKWARD",ArrowLeft:"LEFT",ArrowRight:"RIGHT",w:"FORWARD",W:"FORWARD",s:"BACKWARD",S:"BACKWARD",a:"LEFT",A:"LEFT",d:"RIGHT",D:"RIGHT"};
-    const modulesKey="dashboard-module-preferences";
-    const liveDot=document.getElementById("live-dot"),liveText=document.getElementById("live-text"),rawJson=document.getElementById("raw-json"),logList=document.getElementById("log-list");
-    const toggleDrive=document.getElementById("toggle-drive"),togglePower=document.getElementById("toggle-power"),toggleArm=document.getElementById("toggle-arm");
-    const drivePanel=document.getElementById("drive-panel"),powerPanel=document.getElementById("power-panel"),armPanel=document.getElementById("arm-panel");
-    const powerSlider=document.getElementById("power-slider"),powerValue=document.getElementById("power-value"),controlFeedback=document.getElementById("control-feedback");
-    const driveButtons=[...document.querySelectorAll(".drive")],emergencyStop=document.getElementById("emergency-stop");
-    const liftSlider=document.getElementById("lift-slider"),gripSlider=document.getElementById("grip-slider"),liftValue=document.getElementById("lift-value"),gripValue=document.getElementById("grip-value"),liftRange=document.getElementById("lift-range"),gripRange=document.getElementById("grip-range"),armFeedback=document.getElementById("arm-feedback"),stepButtons=[...document.querySelectorAll(".step")];
-    let pressedDirection=null,repeatTimer=null,lastLogSignature="";
-    let controlConfig={api_path:"/api/control",default_power:96,max_power:255};
-    let armConfig={api_path:"/api/arm",min_angle_deg:0,max_angle_deg:180,default_lift_deg:110,default_grip_deg:90,step_deg:5};
+    const fields = [
+      "state","current_mode","current_auto_stage","saved_auto_stage","resume_pending","task_active","resume_note",
+      "control_direction","motor_pwm","control_status","arm_lift_deg","arm_grip_deg","arm_status",
+      "delivery_result","target_station","cargo_door","bridge_status","right_cm","left_cm","avg_cm",
+      "diff_cm","heading_deg","rfid_tag","rfid_match","fault"
+    ];
+    const keys = {
+      ArrowUp: "FORWARD",
+      ArrowDown: "BACKWARD",
+      ArrowLeft: "LEFT",
+      ArrowRight: "RIGHT",
+      w: "FORWARD",
+      W: "FORWARD",
+      s: "BACKWARD",
+      S: "BACKWARD",
+      a: "LEFT",
+      A: "LEFT",
+      d: "RIGHT",
+      D: "RIGHT"
+    };
+    const modulesKey = "dashboard-module-preferences";
 
-    function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
-    function setLive(isLive,text){liveDot.classList.toggle("live",isLive);liveText.textContent=text}
-    function fmt(v,key){if(v===undefined||v===null||v==="")return"--";if(typeof v==="number"&&!Number.isFinite(v))return"--";if(typeof v==="number"&&key.endsWith("_cm"))return v.toFixed(1)+" cm";if(typeof v==="number"&&(key==="heading_deg"||key==="arm_lift_deg"||key==="arm_grip_deg"))return Math.round(v)+" deg";if(typeof v==="number"&&key==="motor_pwm")return v+" / "+powerSlider.max;if(typeof v==="boolean")return v?"true":"false";return String(v)}
-    function saveModules(){localStorage.setItem(modulesKey,JSON.stringify({drive:toggleDrive.checked,power:togglePower.checked,arm:toggleArm.checked}))}
-    function loadModules(){try{const raw=localStorage.getItem(modulesKey);if(!raw)return;const v=JSON.parse(raw);if(typeof v.drive==="boolean")toggleDrive.checked=v.drive;if(typeof v.power==="boolean")togglePower.checked=v.power;if(typeof v.arm==="boolean")toggleArm.checked=v.arm}catch(error){console.error(error)}}
-    function syncModules(){drivePanel.hidden=!toggleDrive.checked;powerPanel.hidden=!togglePower.checked;armPanel.hidden=!toggleArm.checked;if(!toggleDrive.checked)releaseDrive();saveModules()}
-    function updatePower(){powerValue.textContent=String(powerSlider.value)}
-    function updateArmLabels(){liftValue.textContent=liftSlider.value+" deg";gripValue.textContent=gripSlider.value+" deg"}
-    function buildLogSignature(packet){return[(packet.state||""),(packet.delivery_result||""),(packet.control_direction||""),(packet.motor_pwm??""),(packet.arm_lift_deg??""),(packet.arm_grip_deg??""),(packet.arm_status||""),(packet.fault||"")].join("|")}
-    function appendLog(packet){const sig=buildLogSignature(packet);if(sig===lastLogSignature)return;lastLogSignature=sig;const item=document.createElement("li");const title=document.createElement("div");title.className="log-title";const s=document.createElement("span");s.textContent=packet.state||"--";const r=document.createElement("span");r.textContent=packet.delivery_result||"--";title.appendChild(s);title.appendChild(r);const meta=document.createElement("div");meta.className="log-meta";meta.textContent=`Drive=${packet.control_direction||"--"}  PWM=${packet.motor_pwm??"--"}  ArmLift=${fmt(packet.arm_lift_deg,"arm_lift_deg")}  ArmGrip=${fmt(packet.arm_grip_deg,"arm_grip_deg")}  Arm=${packet.arm_status||"--"}`;item.appendChild(title);item.appendChild(meta);logList.prepend(item);while(logList.children.length>25)logList.removeChild(logList.lastChild)}
-    function syncDriveButtons(direction){driveButtons.forEach((button)=>button.classList.toggle("active",button.dataset.direction===direction&&direction!=="STOP"))}
-    function render(packet){fields.forEach((key)=>{const node=document.getElementById(key);if(node)node.textContent=fmt(packet[key],key)});if(typeof packet.motor_pwm==="number"&&!pressedDirection){powerSlider.value=String(packet.motor_pwm);updatePower()}if(typeof packet.control_direction==="string"&&!pressedDirection)syncDriveButtons(packet.control_direction.toUpperCase());if(typeof packet.arm_lift_deg==="number"&&document.activeElement!==liftSlider)liftSlider.value=String(packet.arm_lift_deg);if(typeof packet.arm_grip_deg==="number"&&document.activeElement!==gripSlider)gripSlider.value=String(packet.arm_grip_deg);updateArmLabels();rawJson.textContent=JSON.stringify(packet,null,2);setLive(true,"Live update: "+new Date().toLocaleTimeString());appendLog(packet)}
-    async function sendControl(direction,options={}){const payload={direction,power:Number(powerSlider.value),source:options.source||"dashboard"};try{const response=await fetch(controlConfig.api_path||"/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload),keepalive:Boolean(options.keepalive)});const result=await response.json().catch(()=>({}));if(!response.ok||result.ok===false)throw new Error(result.message||`HTTP ${response.status}`);controlFeedback.textContent=result.message||direction+" sent"}catch(error){controlFeedback.textContent="Control request failed: "+error.message}}
-    async function sendArm(joint,angle,source){try{const response=await fetch(armConfig.api_path||"/api/arm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({joint,angle,source:source||"dashboard"})});const result=await response.json().catch(()=>({}));if(!response.ok||result.ok===false)throw new Error(result.message||`HTTP ${response.status}`);armFeedback.textContent=result.message||joint+" sent"}catch(error){armFeedback.textContent="Arm request failed: "+error.message}}
-    function clearRepeat(){if(repeatTimer){clearInterval(repeatTimer);repeatTimer=null}}
-    function releaseDrive(options={}){if(!pressedDirection&&options.skipCommand)return;pressedDirection=null;clearRepeat();syncDriveButtons("STOP");if(!options.skipCommand)void sendControl("STOP",{source:options.source||"dashboard"})}
-    function beginDrive(direction){if(!toggleDrive.checked)return;if(!direction||direction==="STOP"){releaseDrive();return}pressedDirection=direction;syncDriveButtons(direction);void sendControl(direction);clearRepeat();repeatTimer=setInterval(()=>{if(pressedDirection===direction)void sendControl(direction,{source:"dashboard-hold"})},250)}
-    function sliderForJoint(joint){return joint==="LIFT"?liftSlider:gripSlider}
-    function setJoint(joint,nextValue){const slider=sliderForJoint(joint);slider.value=String(clamp(nextValue,Number(slider.min),Number(slider.max)));updateArmLabels()}
-    function sendJoint(joint,source){const slider=sliderForJoint(joint);void sendArm(joint,Number(slider.value),source)}
-    async function loadConfig(){try{const response=await fetch("/api/config");if(!response.ok)return;const config=await response.json();if(config.manual_control){controlConfig={...controlConfig,...config.manual_control};powerSlider.max=String(controlConfig.max_power||255);powerSlider.value=String(controlConfig.default_power||96);updatePower()}if(config.arm_control){armConfig={...armConfig,...config.arm_control};[liftSlider,gripSlider].forEach((slider)=>{slider.min=String(armConfig.min_angle_deg);slider.max=String(armConfig.max_angle_deg)});liftSlider.value=String(armConfig.default_lift_deg);gripSlider.value=String(armConfig.default_grip_deg);liftRange.textContent=`${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;gripRange.textContent=`${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;updateArmLabels()}}catch(error){console.error(error)}}
-    async function loadInitial(){try{const response=await fetch("/api/state");if(!response.ok)return;const packet=await response.json();if(Object.keys(packet).length>0)render(packet)}catch(error){console.error(error)}}
-    async function loadHistory(){try{const response=await fetch("/api/history");if(!response.ok)return;const history=await response.json();logList.innerHTML="";lastLogSignature="";history.slice().reverse().forEach((packet)=>appendLog(packet))}catch(error){console.error(error)}}
-    function connectEvents(){const source=new EventSource("/events");source.onmessage=(event)=>render(JSON.parse(event.data));source.onerror=()=>setLive(false,"Disconnected, retrying...")}
+    const liveDot = document.getElementById("live-dot");
+    const liveText = document.getElementById("live-text");
+    const rawJson = document.getElementById("raw-json");
+    const logList = document.getElementById("log-list");
 
-    [toggleDrive,togglePower,toggleArm].forEach((toggle)=>toggle.addEventListener("change",syncModules));
-    driveButtons.forEach((button)=>{const direction=button.dataset.direction;if(!direction)return;if(direction==="STOP"){button.addEventListener("click",()=>releaseDrive());return}button.addEventListener("pointerdown",(event)=>{event.preventDefault();beginDrive(direction);button.setPointerCapture?.(event.pointerId)});button.addEventListener("pointerup",()=>releaseDrive());button.addEventListener("pointercancel",()=>releaseDrive());button.addEventListener("pointerleave",()=>releaseDrive({skipCommand:true}))});
-    emergencyStop.addEventListener("click",()=>releaseDrive());
-    powerSlider.addEventListener("input",()=>{updatePower();if(pressedDirection)void sendControl(pressedDirection,{source:"dashboard-slider"})});
-    liftSlider.addEventListener("input",updateArmLabels);gripSlider.addEventListener("input",updateArmLabels);
-    liftSlider.addEventListener("change",()=>sendJoint("LIFT","dashboard-slider"));gripSlider.addEventListener("change",()=>sendJoint("GRIP","dashboard-slider"));
-    document.getElementById("send-lift").addEventListener("click",()=>sendJoint("LIFT","dashboard-button"));
-    document.getElementById("send-grip").addEventListener("click",()=>sendJoint("GRIP","dashboard-button"));
-    stepButtons.forEach((button)=>button.addEventListener("click",()=>{const delta=Number(button.dataset.delta||armConfig.step_deg);setJoint(button.dataset.joint,Number(sliderForJoint(button.dataset.joint).value)+delta);sendJoint(button.dataset.joint,"dashboard-step")}));
-    window.addEventListener("blur",()=>releaseDrive());document.addEventListener("visibilitychange",()=>{if(document.hidden)releaseDrive()});
-    window.addEventListener("beforeunload",()=>{releaseDrive({source:"dashboard-unload",skipCommand:true});void sendControl("STOP",{source:"dashboard-unload",keepalive:true})});
-    window.addEventListener("keydown",(event)=>{const direction=keys[event.key];if(!direction||event.repeat){if(event.code==="Space"){event.preventDefault();releaseDrive()}return}if(!toggleDrive.checked)return;event.preventDefault();if(pressedDirection!==direction)beginDrive(direction)});
-    window.addEventListener("keyup",(event)=>{const direction=keys[event.key];if(!direction)return;event.preventDefault();if(pressedDirection===direction)releaseDrive()});
-    loadModules();syncModules();loadConfig().then(()=>loadInitial());loadHistory();connectEvents();
+    const toggleAuto = document.getElementById("toggle-auto");
+    const toggleDrive = document.getElementById("toggle-drive");
+    const togglePower = document.getElementById("toggle-power");
+    const toggleArm = document.getElementById("toggle-arm");
+
+    const autoPanel = document.getElementById("auto-panel");
+    const drivePanel = document.getElementById("drive-panel");
+    const powerPanel = document.getElementById("power-panel");
+    const armPanel = document.getElementById("arm-panel");
+
+    const modeFeedbackTitle = document.getElementById("mode-feedback-title");
+    const modeFeedback = document.getElementById("mode-feedback");
+    const startTaskButton = document.getElementById("start-task");
+    const takeManualButton = document.getElementById("take-manual");
+    const resumeTaskButton = document.getElementById("resume-task");
+    const abortTaskButton = document.getElementById("abort-task");
+
+    const powerSlider = document.getElementById("power-slider");
+    const powerValue = document.getElementById("power-value");
+    const controlFeedback = document.getElementById("control-feedback");
+    const driveButtons = [...document.querySelectorAll(".drive")];
+    const emergencyStop = document.getElementById("emergency-stop");
+
+    const liftSlider = document.getElementById("lift-slider");
+    const gripSlider = document.getElementById("grip-slider");
+    const liftValue = document.getElementById("lift-value");
+    const gripValue = document.getElementById("grip-value");
+    const liftRange = document.getElementById("lift-range");
+    const gripRange = document.getElementById("grip-range");
+    const armFeedback = document.getElementById("arm-feedback");
+    const stepButtons = [...document.querySelectorAll(".step")];
+    const sendLiftButton = document.getElementById("send-lift");
+    const sendGripButton = document.getElementById("send-grip");
+
+    let pressedDirection = null;
+    let repeatTimer = null;
+    let lastLogSignature = "";
+    let lastPacket = {};
+
+    let controlConfig = {api_path: "/api/control", default_power: 96, max_power: 255};
+    let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 5};
+    let modeConfig = {api_path: "/api/mode"};
+    let taskConfig = {api_path: "/api/task"};
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function setLive(isLive, text) {
+      liveDot.classList.toggle("live", isLive);
+      liveText.textContent = text;
+    }
+
+    function fmt(value, key) {
+      if (value === undefined || value === null || value === "") return "--";
+      if (typeof value === "number" && !Number.isFinite(value)) return "--";
+      if (typeof value === "number" && key.endsWith("_cm")) return value.toFixed(1) + " cm";
+      if (typeof value === "number" && (key === "heading_deg" || key === "arm_lift_deg" || key === "arm_grip_deg")) return Math.round(value) + " deg";
+      if (typeof value === "number" && key === "motor_pwm") return value + " / " + powerSlider.max;
+      if (typeof value === "boolean") return value ? "true" : "false";
+      return String(value);
+    }
+
+    function saveModules() {
+      localStorage.setItem(modulesKey, JSON.stringify({
+        auto: toggleAuto.checked,
+        drive: toggleDrive.checked,
+        power: togglePower.checked,
+        arm: toggleArm.checked
+      }));
+    }
+
+    function loadModules() {
+      try {
+        const raw = localStorage.getItem(modulesKey);
+        if (!raw) return;
+        const value = JSON.parse(raw);
+        if (typeof value.auto === "boolean") toggleAuto.checked = value.auto;
+        if (typeof value.drive === "boolean") toggleDrive.checked = value.drive;
+        if (typeof value.power === "boolean") togglePower.checked = value.power;
+        if (typeof value.arm === "boolean") toggleArm.checked = value.arm;
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function syncModules() {
+      autoPanel.hidden = !toggleAuto.checked;
+      drivePanel.hidden = !toggleDrive.checked;
+      powerPanel.hidden = !togglePower.checked;
+      armPanel.hidden = !toggleArm.checked;
+      if (!toggleDrive.checked) releaseDrive();
+      saveModules();
+    }
+
+    function updatePower() {
+      powerValue.textContent = String(powerSlider.value);
+    }
+
+    function updateArmLabels() {
+      liftValue.textContent = liftSlider.value + " deg";
+      gripValue.textContent = gripSlider.value + " deg";
+    }
+
+    function hasInterruptResume(packet) {
+      return Boolean(packet && packet.mode_protocol_version);
+    }
+
+    function manualControlsEnabled(packet) {
+      if (!hasInterruptResume(packet)) return true;
+      return String(packet.current_mode || "") === "MANUAL_OVERRIDE";
+    }
+
+    function faultBlocksResume(packet) {
+      return Boolean(packet && (packet.fault_latched || packet.current_mode === "FAULT"));
+    }
+
+    function buildLogSignature(packet) {
+      return [
+        packet.state || "",
+        packet.current_mode || "",
+        packet.current_auto_stage || "",
+        packet.saved_auto_stage || "",
+        packet.resume_pending === true,
+        packet.delivery_result || "",
+        packet.control_direction || "",
+        packet.motor_pwm !== undefined && packet.motor_pwm !== null ? packet.motor_pwm : "",
+        packet.arm_lift_deg !== undefined && packet.arm_lift_deg !== null ? packet.arm_lift_deg : "",
+        packet.arm_grip_deg !== undefined && packet.arm_grip_deg !== null ? packet.arm_grip_deg : "",
+        packet.arm_status || "",
+        packet.fault || ""
+      ].join("|");
+    }
+
+    function appendLog(packet) {
+      const signature = buildLogSignature(packet);
+      if (signature === lastLogSignature) return;
+      lastLogSignature = signature;
+
+      const item = document.createElement("li");
+      const title = document.createElement("div");
+      title.className = "log-title";
+      const stateNode = document.createElement("span");
+      stateNode.textContent = packet.state || "--";
+      const resultNode = document.createElement("span");
+      resultNode.textContent = packet.delivery_result || "--";
+      title.appendChild(stateNode);
+      title.appendChild(resultNode);
+
+      const meta = document.createElement("div");
+        meta.className = "log-meta";
+        meta.textContent =
+          `Mode=${packet.current_mode || "--"}  Auto=${packet.current_auto_stage || "--"}  ` +
+          `Saved=${packet.saved_auto_stage || "--"}  Drive=${packet.control_direction || "--"}  ` +
+          `PWM=${packet.motor_pwm !== undefined && packet.motor_pwm !== null ? packet.motor_pwm : "--"}  Resume=${packet.resume_pending === true}`;
+
+      item.appendChild(title);
+      item.appendChild(meta);
+      logList.prepend(item);
+      while (logList.children.length > 25) logList.removeChild(logList.lastChild);
+    }
+
+    function syncDriveButtons(direction) {
+      driveButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.direction === direction && direction !== "STOP");
+      });
+    }
+
+    function syncManualInterlock(packet) {
+      const manualEnabled = manualControlsEnabled(packet);
+      const hasProtocol = hasInterruptResume(packet);
+
+      driveButtons.forEach((button) => {
+        button.disabled = !manualEnabled;
+      });
+      emergencyStop.disabled = !manualEnabled;
+      powerSlider.disabled = !manualEnabled;
+      liftSlider.disabled = !manualEnabled;
+      gripSlider.disabled = !manualEnabled;
+      sendLiftButton.disabled = !manualEnabled;
+      sendGripButton.disabled = !manualEnabled;
+      stepButtons.forEach((button) => {
+        button.disabled = !manualEnabled;
+      });
+
+      if (!manualEnabled && pressedDirection) {
+        releaseDrive({skipCommand: true});
+      }
+
+      if (hasProtocol) {
+        controlFeedback.textContent = manualEnabled
+          ? "Manual override active. Hold a direction button to move. Release to stop."
+          : "Take manual control first. Direct drive is blocked while AUTO owns the chassis.";
+        armFeedback.textContent = manualEnabled
+          ? "Manual override active. Arm commands will be sent to Arduino immediately."
+          : "Take manual control first. Direct arm commands are blocked while AUTO owns the arm.";
+      }
+    }
+
+    function syncAutoButtons(packet) {
+      const protocolReady = hasInterruptResume(packet);
+      const mode = String(packet.current_mode || "");
+      const taskActive = Boolean(packet.task_active);
+      const resumePending = Boolean(packet.resume_pending);
+      const resumeBlocked = faultBlocksResume(packet);
+      const savedStage = String(packet.saved_auto_stage || "");
+      const manualHoldingTask = mode === "MANUAL_OVERRIDE" && (taskActive || resumePending || savedStage);
+      const abortAvailable = taskActive || resumePending || savedStage || (mode !== "MANUAL_OVERRIDE" && taskActive);
+
+      startTaskButton.disabled = !protocolReady || manualHoldingTask;
+      takeManualButton.disabled = !protocolReady || mode === "MANUAL_OVERRIDE";
+      resumeTaskButton.disabled = !protocolReady || mode !== "MANUAL_OVERRIDE" || !resumePending || resumeBlocked;
+      abortTaskButton.disabled = !protocolReady || !abortAvailable;
+
+      if (!protocolReady) {
+        modeFeedbackTitle.textContent = "Mode Feedback";
+        modeFeedback.textContent = "Interrupt/resume protocol unavailable. Flash interrupt_resume_demo.ino to enable task-level manual takeover.";
+        return;
+      }
+
+      if (mode === "MANUAL_OVERRIDE") {
+        modeFeedbackTitle.textContent = "Manual Override";
+        if (resumeBlocked) {
+          modeFeedback.textContent = "Manual control is active, but a latched fault blocks resume. Abort or restart the task after the issue is cleared.";
+        } else if (resumePending) {
+          modeFeedback.textContent = `Manual control is active. Resume checkpoint: ${packet.saved_auto_stage || "--"}.`;
+        } else {
+          modeFeedback.textContent = "Manual control is active. There is no saved auto stage to resume, so starting a new auto task is allowed.";
+        }
+        return;
+      }
+
+      if (mode === "FAULT") {
+        modeFeedbackTitle.textContent = "Fault";
+        modeFeedback.textContent = "Auto task is faulted. Resume is intentionally blocked until the task is aborted or restarted.";
+        return;
+      }
+
+      modeFeedbackTitle.textContent = "Auto Task";
+      if (taskActive) {
+        modeFeedback.textContent = `AUTO owns the robot. Current stage: ${packet.current_auto_stage || "--"}.`;
+      } else {
+        modeFeedback.textContent = "No active auto task. You can start a new task or take manual control directly.";
+      }
+    }
+
+    function render(packet) {
+      lastPacket = packet || {};
+      fields.forEach((key) => {
+        const node = document.getElementById(key);
+        if (node) node.textContent = fmt(packet[key], key);
+      });
+      if (typeof packet.motor_pwm === "number" && !pressedDirection) {
+        powerSlider.value = String(packet.motor_pwm);
+        updatePower();
+      }
+      if (typeof packet.control_direction === "string" && !pressedDirection) {
+        syncDriveButtons(packet.control_direction.toUpperCase());
+      }
+      if (typeof packet.arm_lift_deg === "number" && document.activeElement !== liftSlider) liftSlider.value = String(packet.arm_lift_deg);
+      if (typeof packet.arm_grip_deg === "number" && document.activeElement !== gripSlider) gripSlider.value = String(packet.arm_grip_deg);
+      updateArmLabels();
+      rawJson.textContent = JSON.stringify(packet, null, 2);
+      setLive(true, "Live update: " + new Date().toLocaleTimeString());
+      appendLog(packet);
+      syncManualInterlock(packet);
+      syncAutoButtons(packet);
+    }
+
+    async function postJson(path, payload, feedbackNode) {
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.ok === false) {
+          throw new Error(result.message || `HTTP ${response.status}`);
+        }
+        if (feedbackNode) feedbackNode.textContent = result.message || "request sent";
+        return result;
+      } catch (error) {
+        if (feedbackNode) feedbackNode.textContent = `${payload.action || payload.direction || payload.joint} failed: ${error.message}`;
+        throw error;
+      }
+    }
+
+    async function sendControl(direction, options = {}) {
+      if (!manualControlsEnabled(lastPacket)) {
+        controlFeedback.textContent = "Take manual control first.";
+        return;
+      }
+      const payload = {direction, power: Number(powerSlider.value), source: options.source || "dashboard"};
+      await postJson(controlConfig.api_path || "/api/control", payload, controlFeedback).catch(() => {});
+    }
+
+    async function sendArm(joint, angle, source) {
+      if (!manualControlsEnabled(lastPacket)) {
+        armFeedback.textContent = "Take manual control first.";
+        return;
+      }
+      await postJson(
+        armConfig.api_path || "/api/arm",
+        {joint, angle, source: source || "dashboard"},
+        armFeedback
+      ).catch(() => {});
+    }
+
+    async function sendModeAction(action) {
+      await postJson(modeConfig.api_path || "/api/mode", {action, source: "dashboard"}, modeFeedback).catch(() => {});
+    }
+
+    async function sendTaskAction(action) {
+      await postJson(taskConfig.api_path || "/api/task", {action, source: "dashboard"}, modeFeedback).catch(() => {});
+    }
+
+    function clearRepeat() {
+      if (repeatTimer) {
+        clearInterval(repeatTimer);
+        repeatTimer = null;
+      }
+    }
+
+    function releaseDrive(options = {}) {
+      if (!pressedDirection && options.skipCommand) return;
+      pressedDirection = null;
+      clearRepeat();
+      syncDriveButtons("STOP");
+      if (!options.skipCommand) {
+        void sendControl("STOP", {source: options.source || "dashboard"});
+      }
+    }
+
+    function beginDrive(direction) {
+      if (!toggleDrive.checked || !manualControlsEnabled(lastPacket)) return;
+      if (!direction || direction === "STOP") {
+        releaseDrive();
+        return;
+      }
+      pressedDirection = direction;
+      syncDriveButtons(direction);
+      void sendControl(direction);
+      clearRepeat();
+      repeatTimer = setInterval(() => {
+        if (pressedDirection === direction) void sendControl(direction, {source: "dashboard-hold"});
+      }, 250);
+    }
+
+    function sliderForJoint(joint) {
+      return joint === "LIFT" ? liftSlider : gripSlider;
+    }
+
+    function setJoint(joint, nextValue) {
+      const slider = sliderForJoint(joint);
+      slider.value = String(clamp(nextValue, Number(slider.min), Number(slider.max)));
+      updateArmLabels();
+    }
+
+    function sendJoint(joint, source) {
+      const slider = sliderForJoint(joint);
+      void sendArm(joint, Number(slider.value), source);
+    }
+
+    async function loadConfig() {
+      try {
+        const response = await fetch("/api/config");
+        if (!response.ok) return;
+        const config = await response.json();
+
+        if (config.manual_control) {
+          controlConfig = {...controlConfig, ...config.manual_control};
+          powerSlider.max = String(controlConfig.max_power || 255);
+          powerSlider.value = String(controlConfig.default_power || 96);
+          updatePower();
+        }
+        if (config.arm_control) {
+          armConfig = {...armConfig, ...config.arm_control};
+          [liftSlider, gripSlider].forEach((slider) => {
+            slider.min = String(armConfig.min_angle_deg);
+            slider.max = String(armConfig.max_angle_deg);
+          });
+          liftSlider.value = String(armConfig.default_lift_deg);
+          gripSlider.value = String(armConfig.default_grip_deg);
+          liftRange.textContent = `${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;
+          gripRange.textContent = `${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;
+          updateArmLabels();
+        }
+        if (config.mode_control) modeConfig = {...modeConfig, ...config.mode_control};
+        if (config.task_control) taskConfig = {...taskConfig, ...config.task_control};
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function loadInitial() {
+      try {
+        const response = await fetch("/api/state");
+        if (!response.ok) return;
+        const packet = await response.json();
+        if (Object.keys(packet).length > 0) render(packet);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const response = await fetch("/api/history");
+        if (!response.ok) return;
+        const history = await response.json();
+        logList.innerHTML = "";
+        lastLogSignature = "";
+        history.slice().reverse().forEach((packet) => appendLog(packet));
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function connectEvents() {
+      const source = new EventSource("/events");
+      source.onmessage = (event) => render(JSON.parse(event.data));
+      source.onerror = () => setLive(false, "Disconnected, retrying...");
+    }
+
+    [toggleAuto, toggleDrive, togglePower, toggleArm].forEach((toggle) => {
+      toggle.addEventListener("change", syncModules);
+    });
+
+    driveButtons.forEach((button) => {
+      const direction = button.dataset.direction;
+      if (!direction) return;
+      if (direction === "STOP") {
+        button.addEventListener("click", () => releaseDrive());
+        return;
+      }
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        beginDrive(direction);
+        if (button.setPointerCapture) button.setPointerCapture(event.pointerId);
+      });
+      button.addEventListener("pointerup", () => releaseDrive());
+      button.addEventListener("pointercancel", () => releaseDrive());
+      button.addEventListener("pointerleave", () => releaseDrive({skipCommand: true}));
+    });
+
+    emergencyStop.addEventListener("click", () => releaseDrive());
+    powerSlider.addEventListener("input", () => {
+      updatePower();
+      if (pressedDirection) void sendControl(pressedDirection, {source: "dashboard-slider"});
+    });
+    liftSlider.addEventListener("input", updateArmLabels);
+    gripSlider.addEventListener("input", updateArmLabels);
+    liftSlider.addEventListener("change", () => sendJoint("LIFT", "dashboard-slider"));
+    gripSlider.addEventListener("change", () => sendJoint("GRIP", "dashboard-slider"));
+    sendLiftButton.addEventListener("click", () => sendJoint("LIFT", "dashboard-button"));
+    sendGripButton.addEventListener("click", () => sendJoint("GRIP", "dashboard-button"));
+    stepButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const delta = Number(button.dataset.delta || armConfig.step_deg);
+        const joint = button.dataset.joint;
+        setJoint(joint, Number(sliderForJoint(joint).value) + delta);
+        sendJoint(joint, "dashboard-step");
+      });
+    });
+
+    startTaskButton.addEventListener("click", () => sendTaskAction("START"));
+    takeManualButton.addEventListener("click", () => sendModeAction("TAKE_MANUAL"));
+    resumeTaskButton.addEventListener("click", () => sendModeAction("RESUME_AUTO"));
+    abortTaskButton.addEventListener("click", () => {
+      if (String(lastPacket.current_mode || "") === "MANUAL_OVERRIDE") {
+        void sendModeAction("ABORT_TASK");
+      } else {
+        void sendTaskAction("ABORT");
+      }
+    });
+
+    window.addEventListener("blur", () => releaseDrive());
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) releaseDrive();
+    });
+    window.addEventListener("beforeunload", () => {
+      releaseDrive({source: "dashboard-unload", skipCommand: true});
+      if (manualControlsEnabled(lastPacket)) {
+        void fetch(controlConfig.api_path || "/api/control", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({direction: "STOP", power: Number(powerSlider.value), source: "dashboard-unload"}),
+          keepalive: true
+        });
+      }
+    });
+    window.addEventListener("keydown", (event) => {
+      const direction = keys[event.key];
+      if (!direction || event.repeat) {
+        if (event.code === "Space") {
+          event.preventDefault();
+          releaseDrive();
+        }
+        return;
+      }
+      if (!toggleDrive.checked || !manualControlsEnabled(lastPacket)) return;
+      event.preventDefault();
+      if (pressedDirection !== direction) beginDrive(direction);
+    });
+    window.addEventListener("keyup", (event) => {
+      const direction = keys[event.key];
+      if (!direction) return;
+      event.preventDefault();
+      if (pressedDirection === direction) releaseDrive();
+    });
+
+    loadModules();
+    syncModules();
+    loadConfig().then(() => loadInitial());
+    loadHistory();
+    connectEvents();
+    updatePower();
+    updateArmLabels();
   </script>
 </body>
 </html>

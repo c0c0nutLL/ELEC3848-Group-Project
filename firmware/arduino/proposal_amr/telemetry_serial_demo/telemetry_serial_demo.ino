@@ -1,8 +1,10 @@
 #include <Arduino.h>
 #include <Servo.h>
+#include <Wire.h>
+#include <math.h>
 #include <string.h>
 
-// Motor pin mapping reused from required_function_c1 reference sketches.
+// 电机引脚沿用 Required Function 阶段已验证的映射。
 #define PWMA 12
 #define DIRA1 34
 #define DIRA2 35
@@ -35,12 +37,14 @@
 #define MOTORD_BACKOFF(pwm) do { digitalWrite(DIRD1, HIGH); digitalWrite(DIRD2, LOW);  analogWrite(PWMD, pwm); } while (0)
 #define MOTORD_STOP()       do { digitalWrite(DIRD1, LOW);  digitalWrite(DIRD2, LOW);  analogWrite(PWMD, 0); } while (0)
 
-const uint8_t ULTRASONIC_RIGHT_TRIG_PIN = 6;
-const uint8_t ULTRASONIC_RIGHT_ECHO_PIN = 4;
-const uint8_t ULTRASONIC_LEFT_TRIG_PIN = 10;
-const uint8_t ULTRASONIC_LEFT_ECHO_PIN = 7;
+// 这两组 ultrasonic 仍然是前保险杠右/左前方测距，不是已经移除的侧边超声波。
+const uint8_t FRONT_ULTRASONIC_RIGHT_TRIG_PIN = 6;
+const uint8_t FRONT_ULTRASONIC_RIGHT_ECHO_PIN = 4;
+const uint8_t FRONT_ULTRASONIC_LEFT_TRIG_PIN = 10;
+const uint8_t FRONT_ULTRASONIC_LEFT_ECHO_PIN = 7;
 const uint8_t ARM_GRIP_SERVO_PIN = 44;
 const uint8_t ARM_LIFT_SERVO_PIN = 45;
+const uint8_t MPU6050_ADDR = 0x68;
 
 const unsigned long TELEMETRY_INTERVAL_MS = 200UL;
 const unsigned long DISTANCE_SAMPLE_INTERVAL_MS = 100UL;
@@ -48,8 +52,10 @@ const unsigned long COMMAND_TIMEOUT_MS = 700UL;
 const unsigned long ARM_ACTIVE_WINDOW_MS = 1200UL;
 const unsigned long REMOTE_UNLOCK_OPEN_MS = 5000UL;
 const unsigned long ULTRASONIC_TIMEOUT_US = 30000UL;
+const unsigned long HEADING_SAMPLE_INTERVAL_MS = 8UL;
 
 const char *TARGET_STATION = "MANUAL";
+
 const int DEFAULT_MOTOR_PWM = 96;
 const int DEFAULT_ARM_GRIP_DEG = 90;
 const int DEFAULT_ARM_LIFT_DEG = 110;
@@ -57,14 +63,26 @@ const int MIN_MOTOR_PWM = 0;
 const int MAX_MOTOR_PWM = 255;
 const int MIN_ARM_DEG = 0;
 const int MAX_ARM_DEG = 180;
-const float LEFT_SIDE_TRIM = 1.10f;
+
+const float GYRO_SCALE_DPS_PER_LSB = 131.0f;
+const float HEADING_HOLD_KP = 2.2f;
+const float HEADING_HOLD_DEADBAND_DEG = 0.8f;
+const int HEADING_HOLD_MAX_PWM = 24;
 
 enum DriveDirection {
-  DRIVE_STOP,
+  DRIVE_STOP = 0,
   DRIVE_FORWARD,
   DRIVE_BACKWARD,
   DRIVE_LEFT,
   DRIVE_RIGHT
+};
+
+enum MotorIndex {
+  MOTOR_A = 0,
+  MOTOR_B,
+  MOTOR_C,
+  MOTOR_D,
+  MOTOR_COUNT
 };
 
 struct DistanceSnapshot {
@@ -72,32 +90,58 @@ struct DistanceSnapshot {
   float leftCm;
 };
 
+struct DirectionTrim {
+  int8_t offset[MOTOR_COUNT];
+};
+
+const int8_t DRIVE_SIGN[][MOTOR_COUNT] = {
+  {0, 0, 0, 0},
+  {1, -1, 1, -1},
+  {-1, 1, -1, 1},
+  {-1, -1, 1, 1},
+  {1, 1, -1, -1}
+};
+
+// 四轮基础 trim 用来补偿底盘天然偏航，动态 heading hold 只做小幅修正。
+const DirectionTrim DEFAULT_DIRECTION_TRIM[] = {
+  {{0, 0, 0, 0}},
+  {{8, 0, 8, 0}},
+  {{8, 0, 8, 0}},
+  {{0, 2, 0, 0}},
+  {{0, 2, 0, 0}}
+};
+
 unsigned long lastTelemetryMs = 0;
 unsigned long lastDistanceSampleMs = 0;
 unsigned long lastDriveCommandMs = 0;
 unsigned long lastArmCommandMs = 0;
 unsigned long remoteUnlockUntilMs = 0;
+unsigned long lastHeadingSampleMs = 0;
+unsigned long lastHeadingUpdateUs = 0;
 
 DriveDirection currentDirection = DRIVE_STOP;
 bool commandTimedOut = false;
+bool mpuReady = false;
 int motorPwm = DEFAULT_MOTOR_PWM;
 int currentArmGripDeg = DEFAULT_ARM_GRIP_DEG;
 int currentArmLiftDeg = DEFAULT_ARM_LIFT_DEG;
+int currentWheelPwm[MOTOR_COUNT] = {0, 0, 0, 0};
 
 DistanceSnapshot latestDistances = {-1.0f, -1.0f};
 float latestAverageCm = -1.0f;
 float latestDiffCm = -1.0f;
+float gyroZBias = 0.0f;
+float latestGyroZDps = 0.0f;
+float headingDeg = 0.0f;
+float headingTargetDeg = 0.0f;
+int lastHeadingCorrectionPwm = 0;
 
 Servo armGripServo;
 Servo armLiftServo;
 
 char commandBuffer[48];
 uint8_t commandLength = 0;
-char lastFault[40] = "";
-
-int applyLeftTrim(int pwm) {
-  return constrain(static_cast<int>(pwm * LEFT_SIDE_TRIM), MIN_MOTOR_PWM, MAX_MOTOR_PWM);
-}
+char lastFault[48] = "";
 
 void setFault(const char *message) {
   strncpy(lastFault, message, sizeof(lastFault) - 1);
@@ -108,41 +152,76 @@ void clearFault() {
   lastFault[0] = '\0';
 }
 
+void stopMotor(MotorIndex motor) {
+  switch (motor) {
+    case MOTOR_A:
+      MOTORA_STOP();
+      break;
+    case MOTOR_B:
+      MOTORB_STOP();
+      break;
+    case MOTOR_C:
+      MOTORC_STOP();
+      break;
+    case MOTOR_D:
+    default:
+      MOTORD_STOP();
+      break;
+  }
+  currentWheelPwm[motor] = 0;
+}
+
+void applySignedMotorPwm(MotorIndex motor, int signedPwm) {
+  int pwm = constrain(abs(signedPwm), MIN_MOTOR_PWM, MAX_MOTOR_PWM);
+  currentWheelPwm[motor] = pwm;
+
+  if (signedPwm == 0 || pwm == 0) {
+    stopMotor(motor);
+    return;
+  }
+
+  switch (motor) {
+    case MOTOR_A:
+      if (signedPwm > 0) {
+        MOTORA_FORWARD(pwm);
+      } else {
+        MOTORA_BACKOFF(pwm);
+      }
+      break;
+
+    case MOTOR_B:
+      if (signedPwm > 0) {
+        MOTORB_FORWARD(pwm);
+      } else {
+        MOTORB_BACKOFF(pwm);
+      }
+      break;
+
+    case MOTOR_C:
+      if (signedPwm > 0) {
+        MOTORC_FORWARD(pwm);
+      } else {
+        MOTORC_BACKOFF(pwm);
+      }
+      break;
+
+    case MOTOR_D:
+    default:
+      if (signedPwm > 0) {
+        MOTORD_FORWARD(pwm);
+      } else {
+        MOTORD_BACKOFF(pwm);
+      }
+      break;
+  }
+}
+
 void stopCar() {
-  MOTORA_STOP();
-  MOTORB_STOP();
-  MOTORC_STOP();
-  MOTORD_STOP();
-}
-
-void moveForward() {
-  int leftPwm = applyLeftTrim(motorPwm);
-  MOTORA_FORWARD(leftPwm);
-  MOTORB_BACKOFF(motorPwm);
-  MOTORC_FORWARD(leftPwm);
-  MOTORD_BACKOFF(motorPwm);
-}
-
-void moveBackward() {
-  int leftPwm = applyLeftTrim(motorPwm);
-  MOTORA_BACKOFF(leftPwm);
-  MOTORB_FORWARD(motorPwm);
-  MOTORC_BACKOFF(leftPwm);
-  MOTORD_FORWARD(motorPwm);
-}
-
-void strafeLeft() {
-  MOTORA_BACKOFF(motorPwm);
-  MOTORB_BACKOFF(motorPwm);
-  MOTORC_FORWARD(motorPwm);
-  MOTORD_FORWARD(motorPwm);
-}
-
-void strafeRight() {
-  MOTORA_FORWARD(motorPwm);
-  MOTORB_FORWARD(motorPwm);
-  MOTORC_BACKOFF(motorPwm);
-  MOTORD_BACKOFF(motorPwm);
+  stopMotor(MOTOR_A);
+  stopMotor(MOTOR_B);
+  stopMotor(MOTOR_C);
+  stopMotor(MOTOR_D);
+  lastHeadingCorrectionPwm = 0;
 }
 
 void setupMotorPins() {
@@ -163,14 +242,14 @@ void setupMotorPins() {
   pinMode(DIRD2, OUTPUT);
 }
 
-void setupUltrasonics() {
-  pinMode(ULTRASONIC_RIGHT_TRIG_PIN, OUTPUT);
-  pinMode(ULTRASONIC_RIGHT_ECHO_PIN, INPUT);
-  pinMode(ULTRASONIC_LEFT_TRIG_PIN, OUTPUT);
-  pinMode(ULTRASONIC_LEFT_ECHO_PIN, INPUT);
+void setupFrontUltrasonics() {
+  pinMode(FRONT_ULTRASONIC_RIGHT_TRIG_PIN, OUTPUT);
+  pinMode(FRONT_ULTRASONIC_RIGHT_ECHO_PIN, INPUT);
+  pinMode(FRONT_ULTRASONIC_LEFT_TRIG_PIN, OUTPUT);
+  pinMode(FRONT_ULTRASONIC_LEFT_ECHO_PIN, INPUT);
 
-  digitalWrite(ULTRASONIC_RIGHT_TRIG_PIN, LOW);
-  digitalWrite(ULTRASONIC_LEFT_TRIG_PIN, LOW);
+  digitalWrite(FRONT_ULTRASONIC_RIGHT_TRIG_PIN, LOW);
+  digitalWrite(FRONT_ULTRASONIC_LEFT_TRIG_PIN, LOW);
 }
 
 void setupArm() {
@@ -180,24 +259,177 @@ void setupArm() {
   armLiftServo.write(currentArmLiftDeg);
 }
 
+void writeMpuRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(reg);
+  Wire.write(value);
+  Wire.endTransmission();
+}
+
+bool readMpuBytes(uint8_t startReg, uint8_t count, uint8_t *buffer) {
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(startReg);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  uint8_t received = Wire.requestFrom(MPU6050_ADDR, count);
+  if (received != count) {
+    return false;
+  }
+
+  for (uint8_t i = 0; i < count; ++i) {
+    buffer[i] = Wire.read();
+  }
+  return true;
+}
+
+bool initMpu6050() {
+  writeMpuRegister(0x6B, 0x00);
+  writeMpuRegister(0x1B, 0x00);
+  delay(100);
+
+  uint8_t whoAmI = 0;
+  if (!readMpuBytes(0x75, 1, &whoAmI)) {
+    return false;
+  }
+  return whoAmI == 0x68;
+}
+
+float readGyroZDps() {
+  uint8_t buffer[2];
+  if (!readMpuBytes(0x47, 2, buffer)) {
+    return 0.0f;
+  }
+
+  int16_t rawGyroZ = (static_cast<int16_t>(buffer[0]) << 8) | buffer[1];
+  return static_cast<float>(rawGyroZ) / GYRO_SCALE_DPS_PER_LSB;
+}
+
+void calibrateGyroBias() {
+  const int sampleCount = 400;
+  float sum = 0.0f;
+
+  stopCar();
+  Serial.println(F("Calibrating gyro. Keep robot still."));
+  delay(500);
+
+  for (int i = 0; i < sampleCount; ++i) {
+    sum += readGyroZDps();
+    delay(4);
+  }
+
+  gyroZBias = sum / sampleCount;
+  latestGyroZDps = 0.0f;
+  headingDeg = 0.0f;
+  headingTargetDeg = 0.0f;
+  lastHeadingSampleMs = 0;
+  lastHeadingUpdateUs = 0;
+
+  Serial.print(F("Gyro bias(dps): "));
+  Serial.println(gyroZBias, 4);
+}
+
+void updateHeading() {
+  if (!mpuReady) {
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastHeadingSampleMs < HEADING_SAMPLE_INTERVAL_MS) {
+    return;
+  }
+  lastHeadingSampleMs = nowMs;
+
+  unsigned long nowUs = micros();
+  if (lastHeadingUpdateUs == 0) {
+    lastHeadingUpdateUs = nowUs;
+    return;
+  }
+
+  float dt = (nowUs - lastHeadingUpdateUs) / 1000000.0f;
+  lastHeadingUpdateUs = nowUs;
+
+  uint8_t buffer[2];
+  if (!readMpuBytes(0x47, 2, buffer)) {
+    setFault("MPU6050 read fail");
+    latestGyroZDps = 0.0f;
+    return;
+  }
+
+  int16_t rawGyroZ = (static_cast<int16_t>(buffer[0]) << 8) | buffer[1];
+  float gyroZ = static_cast<float>(rawGyroZ) / GYRO_SCALE_DPS_PER_LSB - gyroZBias;
+  latestGyroZDps = gyroZ;
+  headingDeg += gyroZ * dt;
+}
+
+float readDistanceCm(uint8_t trigPin, uint8_t echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  unsigned long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
+  if (duration == 0) {
+    return -1.0f;
+  }
+
+  return duration * 0.0343f * 0.5f;
+}
+
+void updateDistanceSnapshot() {
+  if (millis() - lastDistanceSampleMs < DISTANCE_SAMPLE_INTERVAL_MS) {
+    return;
+  }
+
+  lastDistanceSampleMs = millis();
+  latestDistances.rightCm = readDistanceCm(FRONT_ULTRASONIC_RIGHT_TRIG_PIN, FRONT_ULTRASONIC_RIGHT_ECHO_PIN);
+  delay(4);
+  latestDistances.leftCm = readDistanceCm(FRONT_ULTRASONIC_LEFT_TRIG_PIN, FRONT_ULTRASONIC_LEFT_ECHO_PIN);
+
+  if (latestDistances.rightCm >= 0.0f && latestDistances.leftCm >= 0.0f) {
+    latestAverageCm = (latestDistances.rightCm + latestDistances.leftCm) * 0.5f;
+    latestDiffCm = latestDistances.rightCm - latestDistances.leftCm;
+  } else {
+    latestAverageCm = -1.0f;
+    latestDiffCm = -1.0f;
+  }
+}
+
+int computeHeadingCorrectionPwm() {
+  if (!mpuReady || currentDirection == DRIVE_STOP) {
+    return 0;
+  }
+
+  float headingErrorDeg = headingTargetDeg - headingDeg;
+  if (fabs(headingErrorDeg) <= HEADING_HOLD_DEADBAND_DEG) {
+    return 0;
+  }
+
+  int maxCorrection = min(HEADING_HOLD_MAX_PWM, motorPwm / 3);
+  int correction = static_cast<int>(headingErrorDeg * HEADING_HOLD_KP);
+  return constrain(correction, -maxCorrection, maxCorrection);
+}
+
+void captureHeadingTarget() {
+  headingTargetDeg = headingDeg;
+}
+
 void driveCurrentDirection() {
-  switch (currentDirection) {
-    case DRIVE_FORWARD:
-      moveForward();
-      break;
-    case DRIVE_BACKWARD:
-      moveBackward();
-      break;
-    case DRIVE_LEFT:
-      strafeLeft();
-      break;
-    case DRIVE_RIGHT:
-      strafeRight();
-      break;
-    case DRIVE_STOP:
-    default:
-      stopCar();
-      break;
+  if (currentDirection == DRIVE_STOP || motorPwm <= 0) {
+    stopCar();
+    return;
+  }
+
+  int correctionPwm = computeHeadingCorrectionPwm();
+  lastHeadingCorrectionPwm = correctionPwm;
+  const DirectionTrim &trim = DEFAULT_DIRECTION_TRIM[currentDirection];
+
+  for (uint8_t motor = 0; motor < MOTOR_COUNT; ++motor) {
+    int basePwm = constrain(motorPwm + trim.offset[motor], MIN_MOTOR_PWM, MAX_MOTOR_PWM);
+    int signedPwm = DRIVE_SIGN[currentDirection][motor] * basePwm - correctionPwm;
+    applySignedMotorPwm(static_cast<MotorIndex>(motor), signedPwm);
   }
 }
 
@@ -298,14 +530,23 @@ const char *armStatus() {
 }
 
 void applyDriveCommand(DriveDirection direction, int requestedPwm) {
+  DriveDirection previousDirection = currentDirection;
+
   motorPwm = constrain(requestedPwm, MIN_MOTOR_PWM, MAX_MOTOR_PWM);
   if (direction != DRIVE_STOP && motorPwm == 0) {
     direction = DRIVE_STOP;
   }
+
   currentDirection = direction;
   lastDriveCommandMs = millis();
   commandTimedOut = false;
   clearFault();
+
+  if (currentDirection != DRIVE_STOP &&
+      (previousDirection == DRIVE_STOP || previousDirection != currentDirection)) {
+    captureHeadingTarget();
+  }
+
   driveCurrentDirection();
 }
 
@@ -320,40 +561,6 @@ void applyArmCommand(const char *joint, int requestedDeg) {
   }
   lastArmCommandMs = millis();
   clearFault();
-}
-
-float readDistanceCm(uint8_t trigPin, uint8_t echoPin) {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-
-  unsigned long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
-  if (duration == 0) {
-    return -1.0f;
-  }
-
-  return duration * 0.0343f * 0.5f;
-}
-
-void updateDistanceSnapshot() {
-  if (millis() - lastDistanceSampleMs < DISTANCE_SAMPLE_INTERVAL_MS) {
-    return;
-  }
-
-  lastDistanceSampleMs = millis();
-  latestDistances.rightCm = readDistanceCm(ULTRASONIC_RIGHT_TRIG_PIN, ULTRASONIC_RIGHT_ECHO_PIN);
-  delay(4);
-  latestDistances.leftCm = readDistanceCm(ULTRASONIC_LEFT_TRIG_PIN, ULTRASONIC_LEFT_ECHO_PIN);
-
-  if (latestDistances.rightCm >= 0.0f && latestDistances.leftCm >= 0.0f) {
-    latestAverageCm = (latestDistances.rightCm + latestDistances.leftCm) * 0.5f;
-    latestDiffCm = latestDistances.rightCm - latestDistances.leftCm;
-  } else {
-    latestAverageCm = -1.0f;
-    latestDiffCm = -1.0f;
-  }
 }
 
 void updateDriveFailsafe() {
@@ -421,7 +628,25 @@ void emitTelemetry() {
   printJsonFloat(latestDiffCm, 1);
   Serial.print(',');
 
-  Serial.print("\"heading_deg\":0.0,");
+  Serial.print("\"heading_deg\":");
+  Serial.print(headingDeg, 2);
+  Serial.print(',');
+
+  Serial.print("\"heading_target_deg\":");
+  Serial.print(headingTargetDeg, 2);
+  Serial.print(',');
+
+  Serial.print("\"heading_error_deg\":");
+  Serial.print(headingTargetDeg - headingDeg, 2);
+  Serial.print(',');
+
+  Serial.print("\"gyro_z_dps\":");
+  Serial.print(latestGyroZDps, 2);
+  Serial.print(',');
+
+  Serial.print("\"heading_correction_pwm\":");
+  Serial.print(lastHeadingCorrectionPwm);
+  Serial.print(',');
 
   Serial.print("\"rfid_tag\":");
   printJsonString("");
@@ -443,6 +668,22 @@ void emitTelemetry() {
 
   Serial.print("\"motor_pwm\":");
   Serial.print(motorPwm);
+  Serial.print(',');
+
+  Serial.print("\"motor_pwm_a\":");
+  Serial.print(currentWheelPwm[MOTOR_A]);
+  Serial.print(',');
+
+  Serial.print("\"motor_pwm_b\":");
+  Serial.print(currentWheelPwm[MOTOR_B]);
+  Serial.print(',');
+
+  Serial.print("\"motor_pwm_c\":");
+  Serial.print(currentWheelPwm[MOTOR_C]);
+  Serial.print(',');
+
+  Serial.print("\"motor_pwm_d\":");
+  Serial.print(currentWheelPwm[MOTOR_D]);
   Serial.print(',');
 
   Serial.print("\"control_status\":");
@@ -493,6 +734,16 @@ void handleCommand(const char *command) {
 
   if (strcmp(token, "STOP") == 0) {
     applyDriveCommand(DRIVE_STOP, motorPwm);
+    return;
+  }
+
+  if (strcmp(token, "GYRO") == 0) {
+    if (!mpuReady) {
+      setFault("MPU6050 not ready");
+      return;
+    }
+    clearFault();
+    calibrateGyroBias();
     return;
   }
 
@@ -569,29 +820,48 @@ void pollSerialCommands() {
 }
 
 void printHelp() {
-  Serial.println("Manual telemetry sketch ready.");
-  Serial.println("Commands:");
-  Serial.println("  DRIVE FORWARD <0-255>");
-  Serial.println("  DRIVE BACKWARD <0-255>");
-  Serial.println("  DRIVE LEFT <0-255>");
-  Serial.println("  DRIVE RIGHT <0-255>");
-  Serial.println("  DRIVE STOP <0-255>");
-  Serial.println("  ARM LIFT <0-180>");
-  Serial.println("  ARM GRIP <0-180>");
-  Serial.println("  OPEN_DOOR");
+  Serial.println(F("Manual telemetry sketch ready."));
+  Serial.println(F("Front ultrasonic pair is still active for docking/telemetry."));
+  Serial.println(F("Drive control now uses gyro heading hold + per-wheel trim."));
+  Serial.println(F("Commands:"));
+  Serial.println(F("  DRIVE FORWARD <0-255>"));
+  Serial.println(F("  DRIVE BACKWARD <0-255>"));
+  Serial.println(F("  DRIVE LEFT <0-255>"));
+  Serial.println(F("  DRIVE RIGHT <0-255>"));
+  Serial.println(F("  DRIVE STOP <0-255>"));
+  Serial.println(F("  ARM LIFT <0-180>"));
+  Serial.println(F("  ARM GRIP <0-180>"));
+  Serial.println(F("  GYRO"));
+  Serial.println(F("  OPEN_DOOR"));
 }
 
 void setup() {
   Serial.begin(115200);
+  Wire.begin();
+#if defined(WIRE_HAS_TIMEOUT)
+  Wire.setWireTimeout(3000, true);
+#endif
+
   setupMotorPins();
-  setupUltrasonics();
+  setupFrontUltrasonics();
   setupArm();
   stopCar();
-  delay(1500);
+
+  if (!initMpu6050()) {
+    mpuReady = false;
+    setFault("MPU6050 init fail");
+    Serial.println(F("MPU6050 init failed"));
+  } else {
+    mpuReady = true;
+    calibrateGyroBias();
+  }
+
+  delay(1000);
   printHelp();
 }
 
 void loop() {
+  updateHeading();
   pollSerialCommands();
   updateDriveFailsafe();
   updateDistanceSnapshot();

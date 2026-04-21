@@ -33,12 +33,12 @@ def gstreamer_pipeline(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run real-time YOLO detection on a camera stream and show FPS in the top-left corner."
+        description="Run real-time YOLO detection on a Jetson CSI camera stream and show FPS in the top-left corner."
     )
     parser.add_argument(
         "--camera",
         default="/dev/video0",
-        help="Camera input selector. Default: /dev/video0, which maps to CSI sensor 0.",
+        help="CSI camera selector. Use 0, 1, or a /dev/video0-style CSI alias. Default maps to CSI sensor 0.",
     )
     parser.add_argument(
         "--model",
@@ -121,7 +121,7 @@ def parse_sensor_id(camera_path):
     if camera_value.isdigit():
         return int(camera_value)
     raise ValueError(
-        "Unsupported camera input '{}'. Use /dev/video0, /dev/video1, or a numeric CSI sensor id.".format(
+        "Unsupported camera input '{}'. Use 0, 1, or a /dev/video0-style CSI alias.".format(
             camera_path
         )
     )

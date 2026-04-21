@@ -5,10 +5,9 @@
 #include <Adafruit_SSD1306.h>
 
 // Dual-ultrasonic parking test with real-time OLED telemetry.
-// ultrasonic1 is mounted on the right side of the front bumper.
-// ultrasonic2 is mounted on the left side of the front bumper.
-// A larger right distance means the car is farther from the wall on the right,
-// so the heading correction should turn left.
+// 这里使用的是前保险杠右前 / 左前测距，不是已经移除的侧边 ultrasonic。
+// A larger right distance means the car is farther from the right side of the
+// front wall / station surface, so the heading correction should turn left.
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 32
 #define OLED_RESET 28
@@ -50,8 +49,8 @@ bool oledReady = false;
 #define MOTORD_STOP()       do { digitalWrite(DIRD1, LOW);  digitalWrite(DIRD2, LOW);  analogWrite(PWMD, 0); } while (0)
 
 // Pin mapping from amr_pin_mapping_template.xlsx.
-// ultrasonic1: right side, TRIG=6, ECHO=4
-// ultrasonic2: left side, TRIG=10, ECHO=7
+// ultrasonic1: front-right, TRIG=6, ECHO=4
+// ultrasonic2: front-left, TRIG=10, ECHO=7
 const uint8_t ULTRASONIC1_TRIG_PIN = 6;
 const uint8_t ULTRASONIC1_ECHO_PIN = 4;
 const uint8_t ULTRASONIC2_TRIG_PIN = 10;

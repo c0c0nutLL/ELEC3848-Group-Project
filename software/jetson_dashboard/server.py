@@ -1,4 +1,5 @@
 import argparse
+import ipaddress
 import json
 import queue
 import threading
@@ -8,7 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from typing import Any, Deque, Dict, List, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 try:
@@ -32,6 +33,8 @@ DEFAULT_UNLOCK_CONFIG = {
 
 ALLOWED_DRIVE_DIRECTIONS = {"STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT"}
 ALLOWED_ARM_JOINTS = {"LIFT", "GRIP"}
+ALLOWED_MODE_ACTIONS = {"TAKE_MANUAL", "RESUME_AUTO", "ABORT_TASK"}
+ALLOWED_TASK_ACTIONS = {"START", "ABORT"}
 DEFAULT_DRIVE_POWER = 96
 MAX_DRIVE_POWER = 255
 MIN_ARM_ANGLE_DEG = 0
@@ -42,6 +45,10 @@ ARM_ACTIVE_WINDOW_MS = 1200
 MOCK_UNLOCK_OPEN_MS = 5000
 MOCK_DISTANCE_MIN_CM = 8.0
 MOCK_DISTANCE_MAX_CM = 150.0
+MODE_PROTOCOL_VERSION = "interrupt-resume-v1"
+RUN_MODE_AUTO = "AUTO"
+RUN_MODE_MANUAL_OVERRIDE = "MANUAL_OVERRIDE"
+RUN_MODE_FAULT = "FAULT"
 
 state_lock = threading.Lock()
 clients_lock = threading.Lock()
@@ -97,6 +104,31 @@ def load_unlock_config(config_path: Path) -> Dict[str, Any]:
     return config
 
 
+def is_loopback_client(client_ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(client_ip).is_loopback
+    except ValueError:
+        return False
+
+
+def bridge_is_connected() -> bool:
+    if bridge_mode == "mock":
+        return True
+
+    with state_lock:
+        return str(latest_state.get("bridge_status", "")) == "CONNECTED"
+
+
+def clear_serial_command_queue() -> int:
+    dropped = 0
+    while True:
+        try:
+            serial_command_queue.get_nowait()
+            dropped += 1
+        except queue.Empty:
+            return dropped
+
+
 def clamp(value: int, lower: int, upper: int) -> int:
     return max(lower, min(upper, value))
 
@@ -129,6 +161,81 @@ def normalize_arm_angle(raw_angle: Any) -> int:
     except (TypeError, ValueError):
         raise ValueError("angle must be an integer") from None
     return clamp(angle, MIN_ARM_ANGLE_DEG, MAX_ARM_ANGLE_DEG)
+
+
+def normalize_mode_action(raw_action: Any) -> str:
+    action = str(raw_action or "").strip().upper()
+    if action not in ALLOWED_MODE_ACTIONS:
+        raise ValueError(f"action must be one of {sorted(ALLOWED_MODE_ACTIONS)}")
+    return action
+
+
+def normalize_task_action(raw_action: Any) -> str:
+    action = str(raw_action or "").strip().upper()
+    if action not in ALLOWED_TASK_ACTIONS:
+        raise ValueError(f"action must be one of {sorted(ALLOWED_TASK_ACTIONS)}")
+    return action
+
+
+def get_state_snapshot() -> Dict[str, Any]:
+    with state_lock:
+        return dict(latest_state)
+
+
+def mode_protocol_available(snapshot: Optional[Dict[str, Any]] = None) -> bool:
+    if bridge_mode == "mock":
+        return True
+
+    if snapshot is None:
+        snapshot = get_state_snapshot()
+    version = snapshot.get("mode_protocol_version")
+    return isinstance(version, str) and len(version) > 0
+
+
+def current_mode(snapshot: Optional[Dict[str, Any]] = None) -> str:
+    if snapshot is None:
+        snapshot = get_state_snapshot()
+    return str(snapshot.get("current_mode", "") or "").strip().upper()
+
+
+def current_auto_stage(snapshot: Optional[Dict[str, Any]] = None) -> str:
+    if snapshot is None:
+        snapshot = get_state_snapshot()
+    return str(snapshot.get("current_auto_stage", "") or "").strip().upper()
+
+
+def saved_auto_stage(snapshot: Optional[Dict[str, Any]] = None) -> str:
+    if snapshot is None:
+        snapshot = get_state_snapshot()
+    return str(snapshot.get("saved_auto_stage", "") or "").strip().upper()
+
+
+def manual_control_allowed(snapshot: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+    if snapshot is None:
+        snapshot = get_state_snapshot()
+
+    if not mode_protocol_available(snapshot):
+        return True, ""
+
+    mode = current_mode(snapshot)
+    if mode == RUN_MODE_MANUAL_OVERRIDE:
+        return True, ""
+    if bool(snapshot.get("fault_latched")) or mode == RUN_MODE_FAULT:
+        return False, "manual override is required, and resume is blocked until the fault is cleared"
+    return False, "take manual control first"
+
+
+def interrupt_resume_ready(snapshot: Optional[Dict[str, Any]] = None) -> bool:
+    return mode_protocol_available(snapshot)
+
+
+def require_interrupt_resume_protocol(snapshot: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+    if interrupt_resume_ready(snapshot):
+        return True, ""
+    return (
+        False,
+        "current Arduino sketch does not expose interrupt/resume telemetry; flash firmware/arduino/proposal_amr/interrupt_resume_demo/interrupt_resume_demo.ino",
+    )
 
 
 def build_control_patch() -> Dict[str, Any]:
@@ -236,20 +343,23 @@ def record_unlock_event(success: bool, reason: str, client_ip: str, command_sent
         unlock_history.appendleft(event)
 
 
-def queue_serial_command(command: str) -> bool:
+def queue_serial_command(command: str) -> Tuple[bool, str]:
     global mock_unlock_until_ms
 
     if bridge_mode == "mock":
         print(f"[serial-mock] command={command}")
         if command == str(unlock_config.get("door_command", "OPEN_DOOR")):
             mock_unlock_until_ms = current_time_ms() + MOCK_UNLOCK_OPEN_MS
-        return True
+        return True, ""
+
+    if not bridge_is_connected():
+        return False, "serial bridge is not connected"
 
     try:
         serial_command_queue.put_nowait(command)
-        return True
+        return True, ""
     except queue.Full:
-        return False
+        return False, "command queue is full"
 
 
 def flush_serial_commands(ser: Any) -> None:
@@ -284,6 +394,8 @@ def handle_serial_line(line: str) -> None:
     print(
         "[serial] "
         f"state={packet.get('state', '?')} "
+        f"mode={packet.get('current_mode', '?')} "
+        f"auto={packet.get('current_auto_stage', '?')} "
         f"result={packet.get('delivery_result', '?')} "
         f"direction={packet.get('control_direction', '?')}"
     )
@@ -295,6 +407,12 @@ def trigger_manual_drive(
     client_ip: str,
     source: str = "dashboard",
 ) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    snapshot = get_state_snapshot()
+    allowed, block_reason = manual_control_allowed(snapshot)
+    if not allowed:
+        return False, {"ok": False, "message": block_reason}, HTTPStatus.CONFLICT
+    protocol_active = mode_protocol_available(snapshot)
+
     try:
         direction = normalize_direction(direction_raw)
         power = normalize_power(power_raw)
@@ -305,22 +423,34 @@ def trigger_manual_drive(
         direction = "STOP"
 
     command = f"DRIVE {direction} {power}"
-    if not queue_serial_command(command):
-        return False, {"ok": False, "message": "command queue is full"}, HTTPStatus.SERVICE_UNAVAILABLE
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
 
     status = "ACTIVE" if direction != "STOP" else "IDLE"
     message = "stop command queued" if direction == "STOP" else f"{direction.lower()} command queued"
+    patch = {
+        **set_control_state(direction, power, status, source),
+        "state": "IDLE" if direction == "STOP" else f"MANUAL_{direction}",
+        "delivery_result": "READY" if direction == "STOP" else "MANUAL_CONTROL",
+        "control_message": message,
+        "control_last_client": client_ip,
+        "fault": "",
+    }
+    if protocol_active:
+        patch.update(
+            {
+                "current_mode": RUN_MODE_MANUAL_OVERRIDE,
+                "manual_session_active": True,
+                "delivery_result": "RESUME_PENDING" if bool(snapshot.get("resume_pending")) else "MANUAL_CONTROL",
+                "target_station": snapshot.get("target_station", "PROPOSAL_DEMO"),
+            }
+        )
+    else:
+        patch["target_station"] = "MANUAL"
 
     patch_state(
-        {
-            **set_control_state(direction, power, status, source),
-            "state": "IDLE" if direction == "STOP" else f"MANUAL_{direction}",
-            "delivery_result": "READY" if direction == "STOP" else "MANUAL_CONTROL",
-            "target_station": "MANUAL",
-            "control_message": message,
-            "control_last_client": client_ip,
-            "fault": "",
-        },
+        patch,
         add_history=True,
     )
 
@@ -343,6 +473,12 @@ def trigger_arm_control(
     client_ip: str,
     source: str = "dashboard",
 ) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    snapshot = get_state_snapshot()
+    allowed, block_reason = manual_control_allowed(snapshot)
+    if not allowed:
+        return False, {"ok": False, "message": block_reason}, HTTPStatus.CONFLICT
+    protocol_active = mode_protocol_available(snapshot)
+
     try:
         joint = normalize_arm_joint(joint_raw)
         angle = normalize_arm_angle(angle_raw)
@@ -350,18 +486,25 @@ def trigger_arm_control(
         return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
 
     command = f"ARM {joint} {angle}"
-    if not queue_serial_command(command):
-        return False, {"ok": False, "message": "command queue is full"}, HTTPStatus.SERVICE_UNAVAILABLE
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
 
-    patch_state(
-        {
-            **set_arm_state(joint, angle, "ACTIVE", source),
-            "arm_message": f"{joint.lower()} set to {angle} deg",
-            "arm_last_client": client_ip,
-            "fault": "",
-        },
-        add_history=True,
-    )
+    patch = {
+        **set_arm_state(joint, angle, "ACTIVE", source),
+        "arm_message": f"{joint.lower()} set to {angle} deg",
+        "arm_last_client": client_ip,
+        "fault": "",
+    }
+    if protocol_active:
+        patch.update(
+            {
+                "current_mode": RUN_MODE_MANUAL_OVERRIDE,
+                "manual_session_active": True,
+            }
+        )
+
+    patch_state(patch, add_history=True)
 
     return (
         True,
@@ -371,6 +514,311 @@ def trigger_arm_control(
             "command": command,
             "joint": joint,
             "angle": angle,
+        },
+        HTTPStatus.OK,
+    )
+
+
+def trigger_task_action(
+    action_raw: Any,
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    try:
+        action = normalize_task_action(action_raw)
+    except ValueError as exc:
+        return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    snapshot = get_state_snapshot()
+    protocol_ok, protocol_message = require_interrupt_resume_protocol(snapshot)
+    if not protocol_ok:
+        return False, {"ok": False, "message": protocol_message}, HTTPStatus.CONFLICT
+
+    mode = current_mode(snapshot)
+    stage = current_auto_stage(snapshot)
+    saved_stage = saved_auto_stage(snapshot)
+    resume_flag = bool(snapshot.get("resume_pending"))
+    task_active = bool(snapshot.get("task_active"))
+
+    if action == "START":
+        if mode == RUN_MODE_MANUAL_OVERRIDE and (task_active or resume_flag or bool(saved_stage)):
+            return (
+                False,
+                {
+                    "ok": False,
+                    "message": "manual override is holding a saved task; abort or resume before starting a new auto task",
+                },
+                HTTPStatus.CONFLICT,
+            )
+
+        if task_active and stage not in {"", "IDLE", "DONE", "FAULT"}:
+            return False, {"ok": False, "message": "an auto task is already running"}, HTTPStatus.CONFLICT
+
+        command = "TASK START"
+        queued, queue_message = queue_serial_command(command)
+        if not queued:
+            return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        patch_state(
+            {
+                "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                "current_mode": RUN_MODE_AUTO,
+                "current_auto_stage": "START",
+                "saved_auto_stage": "",
+                "resume_pending": False,
+                "manual_session_active": False,
+                "task_active": True,
+                "fault_latched": False,
+                "resume_note": "No saved task",
+                "mode_message": "auto task start requested",
+                "task_message": "auto task start requested",
+                "task_last_client": client_ip,
+                "task_last_source": source,
+                "task_last_action": action,
+                "task_last_command": command,
+                "delivery_result": "AUTO_STARTING",
+                "target_station": "PROPOSAL_DEMO",
+                "fault": "",
+            },
+            add_history=True,
+        )
+
+        return (
+            True,
+            {
+                "ok": True,
+                "message": "auto task start requested",
+                "command": command,
+                "action": action,
+            },
+            HTTPStatus.OK,
+        )
+
+    if mode == RUN_MODE_MANUAL_OVERRIDE:
+        return (
+            False,
+            {
+                "ok": False,
+                "message": "manual override is active; use the manual abort action if you want to clear the saved task and stay in manual mode",
+            },
+            HTTPStatus.CONFLICT,
+        )
+
+    command = "TASK ABORT"
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    patch_state(
+        {
+            "mode_protocol_version": MODE_PROTOCOL_VERSION,
+            "current_mode": RUN_MODE_AUTO,
+            "current_auto_stage": "IDLE",
+            "saved_auto_stage": "",
+            "resume_pending": False,
+            "manual_session_active": False,
+            "task_active": False,
+            "fault_latched": False,
+            "resume_note": "No saved task",
+            "mode_message": "auto task aborted",
+            "task_message": "auto task aborted",
+            "task_last_client": client_ip,
+            "task_last_source": source,
+            "task_last_action": action,
+            "task_last_command": command,
+            "delivery_result": "READY",
+            "fault": "",
+        },
+        add_history=True,
+    )
+
+    return (
+        True,
+        {
+            "ok": True,
+            "message": "auto task aborted",
+            "command": command,
+            "action": action,
+        },
+        HTTPStatus.OK,
+    )
+
+
+def trigger_mode_action(
+    action_raw: Any,
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    try:
+        action = normalize_mode_action(action_raw)
+    except ValueError as exc:
+        return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    snapshot = get_state_snapshot()
+    protocol_ok, protocol_message = require_interrupt_resume_protocol(snapshot)
+    if not protocol_ok:
+        return False, {"ok": False, "message": protocol_message}, HTTPStatus.CONFLICT
+
+    mode = current_mode(snapshot)
+    stage = current_auto_stage(snapshot)
+    saved_stage = saved_auto_stage(snapshot)
+    task_active = bool(snapshot.get("task_active"))
+    resume_flag = bool(snapshot.get("resume_pending"))
+    fault_latched = bool(snapshot.get("fault_latched"))
+
+    if action == "TAKE_MANUAL":
+        if mode == RUN_MODE_MANUAL_OVERRIDE:
+            return (
+                True,
+                {
+                    "ok": True,
+                    "message": "manual override is already active",
+                    "action": action,
+                    "saved_auto_stage": saved_stage,
+                    "resume_pending": resume_flag,
+                },
+                HTTPStatus.OK,
+            )
+
+        command = "OVERRIDE TAKE"
+        queued, queue_message = queue_serial_command(command)
+        if not queued:
+            return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        guessed_saved_stage = saved_stage
+        if not guessed_saved_stage and task_active and stage not in {"", "IDLE", "DONE", "FAULT"}:
+            guessed_saved_stage = stage
+
+        resume_pending_value = resume_flag or bool(guessed_saved_stage)
+        message = "manual override requested"
+        if fault_latched:
+            message = "manual override requested; resume will stay blocked until the fault is cleared"
+        elif not resume_pending_value:
+            message = "manual override requested; there is no resumable auto stage yet"
+
+        patch_state(
+            {
+                "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                "current_mode": RUN_MODE_MANUAL_OVERRIDE,
+                "saved_auto_stage": guessed_saved_stage,
+                "resume_pending": resume_pending_value,
+                "manual_session_active": True,
+                "task_active": task_active or resume_pending_value,
+                "mode_message": message,
+                "mode_last_client": client_ip,
+                "mode_last_source": source,
+                "mode_last_action": action,
+                "mode_last_command": command,
+                "resume_note": "Resume from saved stage" if resume_pending_value else "No saved task",
+                "state": "MANUAL_OVERRIDE",
+                "delivery_result": "RESUME_PENDING" if resume_pending_value else "MANUAL_ONLY",
+                "control_direction": "STOP",
+                "control_status": "IDLE",
+                "fault": snapshot.get("fault", ""),
+            },
+            add_history=True,
+        )
+
+        return (
+            True,
+            {
+                "ok": True,
+                "message": message,
+                "command": command,
+                "action": action,
+                "saved_auto_stage": guessed_saved_stage,
+                "resume_pending": resume_pending_value,
+            },
+            HTTPStatus.OK,
+        )
+
+    if action == "RESUME_AUTO":
+        if mode != RUN_MODE_MANUAL_OVERRIDE:
+            return False, {"ok": False, "message": "system is not in manual override"}, HTTPStatus.CONFLICT
+
+        if fault_latched or mode == RUN_MODE_FAULT:
+            return (
+                False,
+                {"ok": False, "message": "fault is latched; abort or restart the task instead of resuming"},
+                HTTPStatus.CONFLICT,
+            )
+
+        if not resume_flag or not saved_stage:
+            return False, {"ok": False, "message": "no saved auto stage is available for resume"}, HTTPStatus.CONFLICT
+
+        command = "OVERRIDE RESUME"
+        queued, queue_message = queue_serial_command(command)
+        if not queued:
+            return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+        patch_state(
+            {
+                "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                "current_mode": RUN_MODE_AUTO,
+                "current_auto_stage": saved_stage,
+                "resume_pending": False,
+                "manual_session_active": False,
+                "task_active": True,
+                "mode_message": "resume requested",
+                "mode_last_client": client_ip,
+                "mode_last_source": source,
+                "mode_last_action": action,
+                "mode_last_command": command,
+                "resume_note": "Resume requested",
+                "state": saved_stage,
+                "delivery_result": "AUTO_RESUMING",
+            },
+            add_history=True,
+        )
+
+        return (
+            True,
+            {
+                "ok": True,
+                "message": "resume requested",
+                "command": command,
+                "action": action,
+                "resume_stage": saved_stage,
+            },
+            HTTPStatus.OK,
+        )
+
+    if mode != RUN_MODE_MANUAL_OVERRIDE:
+        return trigger_task_action("ABORT", client_ip, source=source)
+
+    command = "OVERRIDE ABORT"
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    patch_state(
+        {
+            "mode_protocol_version": MODE_PROTOCOL_VERSION,
+            "current_mode": RUN_MODE_MANUAL_OVERRIDE,
+            "current_auto_stage": "IDLE",
+            "saved_auto_stage": "",
+            "resume_pending": False,
+            "manual_session_active": True,
+            "task_active": False,
+            "mode_message": "saved task cleared; manual override remains active",
+            "mode_last_client": client_ip,
+            "mode_last_source": source,
+            "mode_last_action": action,
+            "mode_last_command": command,
+            "resume_note": "No saved task",
+            "state": "MANUAL_OVERRIDE",
+            "delivery_result": "MANUAL_ONLY",
+        },
+        add_history=True,
+    )
+
+    return (
+        True,
+        {
+            "ok": True,
+            "message": "saved task cleared; manual override remains active",
+            "command": command,
+            "action": action,
         },
         HTTPStatus.OK,
     )
@@ -399,6 +847,9 @@ def serial_reader_loop(port: str, baudrate: int) -> None:
                     handle_serial_line(raw_line.decode("utf-8", errors="ignore"))
         except Exception as exc:
             print(f"[serial] disconnected: {exc}")
+            dropped_commands = clear_serial_command_queue()
+            if dropped_commands > 0:
+                print(f"[serial] dropped {dropped_commands} queued command(s) after disconnect")
             update_state({
                 "state": "BRIDGE_WAITING",
                 "delivery_result": "SERIAL_DISCONNECTED",
@@ -414,6 +865,15 @@ def serial_reader_loop(port: str, baudrate: int) -> None:
                 "avg_cm": None,
                 "diff_cm": None,
                 "heading_deg": None,
+                "mode_protocol_version": None,
+                "current_mode": None,
+                "current_auto_stage": None,
+                "saved_auto_stage": None,
+                "resume_pending": False,
+                "manual_session_active": False,
+                "task_active": False,
+                "fault_latched": False,
+                "resume_note": "",
                 "fault": str(exc),
             })
             time.sleep(2)
@@ -422,6 +882,7 @@ def serial_reader_loop(port: str, baudrate: int) -> None:
 def mock_reader_loop() -> None:
     start_ms = current_time_ms()
     while not stop_event.is_set():
+        snapshot = get_state_snapshot()
         with control_lock:
             direction = str(control_state["direction"])
             power = int(control_state["power"])
@@ -459,16 +920,34 @@ def mock_reader_loop() -> None:
         mock_sensor_state["left_cm"] = left_cm
 
         cargo_door = "OPEN" if current_time_ms() < mock_unlock_until_ms else "CLOSED"
-        state = "IDLE" if direction == "STOP" else f"MANUAL_{direction}"
-        delivery_result = "READY" if direction == "STOP" else "MANUAL_CONTROL"
-        if direction == "STOP" and cargo_door == "OPEN":
+        current_mode_name = str(snapshot.get("current_mode", RUN_MODE_AUTO) or RUN_MODE_AUTO)
+        current_stage_name = str(snapshot.get("current_auto_stage", "IDLE") or "IDLE")
+        saved_stage_name = str(snapshot.get("saved_auto_stage", "") or "")
+        target_station_name = str(snapshot.get("target_station", "MANUAL") or "MANUAL")
+        resume_pending_value = bool(snapshot.get("resume_pending", False))
+        task_active_value = bool(snapshot.get("task_active", False))
+        manual_session_active_value = bool(snapshot.get("manual_session_active", current_mode_name == RUN_MODE_MANUAL_OVERRIDE))
+        fault_latched_value = bool(snapshot.get("fault_latched", False))
+        resume_note_value = str(snapshot.get("resume_note", "No saved task") or "No saved task")
+
+        state = current_stage_name if current_stage_name else "IDLE"
+        delivery_result = "READY"
+        if current_mode_name == RUN_MODE_MANUAL_OVERRIDE:
+            state = "MANUAL_OVERRIDE" if direction == "STOP" else f"MANUAL_{direction}"
+            delivery_result = "RESUME_PENDING" if resume_pending_value else "MANUAL_ONLY"
+        elif fault_latched_value:
+            state = "FAULT"
+            delivery_result = "FAULT"
+        elif task_active_value:
+            delivery_result = "AUTO_ACTIVE"
+        elif cargo_door == "OPEN":
             state = "REMOTE_UNLOCK"
             delivery_result = "UNLOCKED"
 
         packet = {
             "ts_ms": current_time_ms() - start_ms,
             "state": state,
-            "target_station": "MANUAL",
+            "target_station": target_station_name,
             "right_cm": round(right_cm, 1),
             "left_cm": round(left_cm, 1),
             "avg_cm": round((right_cm + left_cm) * 0.5, 1),
@@ -481,6 +960,15 @@ def mock_reader_loop() -> None:
             "bridge_mode": "mock",
             "bridge_status": "CONNECTED",
             "delivery_result": delivery_result,
+            "mode_protocol_version": MODE_PROTOCOL_VERSION,
+            "current_mode": current_mode_name,
+            "current_auto_stage": current_stage_name,
+            "saved_auto_stage": saved_stage_name,
+            "resume_pending": resume_pending_value,
+            "manual_session_active": manual_session_active_value,
+            "task_active": task_active_value,
+            "fault_latched": fault_latched_value,
+            "resume_note": resume_note_value,
             "control_direction": direction,
             "motor_pwm": power,
             "control_status": control_status,
@@ -523,42 +1011,62 @@ def trigger_unlock(password: str, client_ip: str) -> Tuple[bool, Dict[str, Any],
 
     cooldown_ms = int(unlock_config.get("unlock_cooldown_ms", 0))
     now_ms = current_time_ms()
+    command = str(unlock_config.get("door_command", "OPEN_DOOR"))
+    event_success = False
+    event_reason = ""
+    event_command = ""
+    state_patch = {}  # type: Dict[str, Any]
+    response_payload = {}  # type: Dict[str, Any]
+    response_status = HTTPStatus.OK
 
     with unlock_lock:
         if cooldown_ms > 0 and now_ms - last_unlock_sent_ms < cooldown_ms:
             retry_ms = cooldown_ms - (now_ms - last_unlock_sent_ms)
             message = f"cooldown active, retry in {retry_ms} ms"
-            record_unlock_event(False, message, client_ip)
-            patch_state({
+            event_success = False
+            event_reason = message
+            state_patch = {
                 "unlock_status": "COOLDOWN",
                 "unlock_message": message,
                 "unlock_last_client": client_ip,
-            })
-            return False, {"ok": False, "message": message}, HTTPStatus.TOO_MANY_REQUESTS
+            }
+            response_payload = {"ok": False, "message": message}
+            response_status = HTTPStatus.TOO_MANY_REQUESTS
+        else:
+            queued, queue_message = queue_serial_command(command)
+            if not queued:
+                message = queue_message
+                event_success = False
+                event_reason = message
+                state_patch = {
+                    "unlock_status": "QUEUE_FULL" if message == "command queue is full" else "BRIDGE_OFFLINE",
+                    "unlock_message": message,
+                    "unlock_last_client": client_ip,
+                }
+                response_payload = {"ok": False, "message": message}
+                response_status = HTTPStatus.SERVICE_UNAVAILABLE
+            else:
+                last_unlock_sent_ms = now_ms
+                event_success = True
+                event_reason = "command queued"
+                event_command = command
+                state_patch = {
+                    "unlock_status": "ACCEPTED",
+                    "unlock_message": "fixed password accepted, unlock command sent",
+                    "unlock_last_client": client_ip,
+                    "unlock_last_command": command,
+                    "unlock_last_ts_ms": now_ms,
+                }
+                response_payload = {"ok": True, "message": "unlock command sent", "command": command}
+                response_status = HTTPStatus.OK
 
-        command = str(unlock_config.get("door_command", "OPEN_DOOR"))
-        queued = queue_serial_command(command)
-        if not queued:
-            message = "command queue is full"
-            record_unlock_event(False, message, client_ip)
-            patch_state({
-                "unlock_status": "QUEUE_FULL",
-                "unlock_message": message,
-                "unlock_last_client": client_ip,
-            })
-            return False, {"ok": False, "message": message}, HTTPStatus.SERVICE_UNAVAILABLE
+    record_unlock_event(event_success, event_reason, client_ip, command_sent=event_command)
+    patch_state(state_patch)
 
-        last_unlock_sent_ms = now_ms
+    if event_success:
+        return True, response_payload, response_status
 
-    record_unlock_event(True, "command queued", client_ip, command_sent=command)
-    patch_state({
-        "unlock_status": "ACCEPTED",
-        "unlock_message": "fixed password accepted, unlock command sent",
-        "unlock_last_client": client_ip,
-        "unlock_last_command": command,
-        "unlock_last_ts_ms": now_ms,
-    })
-    return True, {"ok": True, "message": "unlock command sent", "command": command}, HTTPStatus.OK
+    return False, response_payload, response_status
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -615,6 +1123,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.handle_arm_post()
             return
 
+        if parsed.path == "/api/mode":
+            self.handle_mode_post()
+            return
+
+        if parsed.path == "/api/task":
+            self.handle_task_post()
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -662,6 +1178,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "directions": sorted(ALLOWED_DRIVE_DIRECTIONS),
                 "default_power": DEFAULT_DRIVE_POWER,
                 "max_power": MAX_DRIVE_POWER,
+                "loopback_only": True,
+                "requires_manual_override_when_supported": True,
             },
             "arm_control": {
                 "api_path": "/api/arm",
@@ -671,6 +1189,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "default_lift_deg": DEFAULT_ARM_LIFT_DEG,
                 "default_grip_deg": DEFAULT_ARM_GRIP_DEG,
                 "step_deg": 5,
+                "loopback_only": True,
+            },
+            "mode_control": {
+                "api_path": "/api/mode",
+                "actions": sorted(ALLOWED_MODE_ACTIONS),
+                "protocol_version": MODE_PROTOCOL_VERSION,
+                "loopback_only": True,
+            },
+            "task_control": {
+                "api_path": "/api/task",
+                "actions": sorted(ALLOWED_TASK_ACTIONS),
+                "loopback_only": True,
+            },
+            "interrupt_resume": {
+                "protocol_version": MODE_PROTOCOL_VERSION,
+                "paired_sketch": "firmware/arduino/proposal_amr/interrupt_resume_demo/interrupt_resume_demo.ino",
+                "required_state_fields": [
+                    "current_mode",
+                    "current_auto_stage",
+                    "saved_auto_stage",
+                    "resume_pending",
+                ],
             },
         }
         self.send_json(payload)
@@ -731,13 +1271,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json(payload, status)
 
     def handle_control_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "manual drive is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
         try:
             data = self.read_json_body()
         except Exception as exc:
             self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
             return
 
-        client_ip = self.client_address[0] if self.client_address else "unknown"
         direction = data.get("direction", "STOP")
         power = data.get("power", DEFAULT_DRIVE_POWER)
         source = str(data.get("source", "dashboard"))
@@ -745,25 +1292,72 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_json(payload, status)
 
     def handle_arm_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "arm control is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
         try:
             data = self.read_json_body()
         except Exception as exc:
             self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
             return
 
-        client_ip = self.client_address[0] if self.client_address else "unknown"
         joint = data.get("joint", "")
         angle = data.get("angle")
         source = str(data.get("source", "dashboard"))
         ok, payload, status = trigger_arm_control(joint, angle, client_ip, source=source)
         self.send_json(payload, status)
 
+    def handle_mode_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "mode control is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        action = data.get("action", "")
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_mode_action(action, client_ip, source=source)
+        self.send_json(payload, status)
+
+    def handle_task_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "task control is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        action = data.get("action", "")
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_task_action(action, client_ip, source=source)
+        self.send_json(payload, status)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Jetson Nano serial telemetry dashboard")
-    parser.add_argument("--serial", default="/dev/tty/USB0", help="Arduino serial device path")
+    parser.add_argument("--serial", default="/dev/ttyUSB0", help="Arduino serial device path")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
-    parser.add_argument("--host", default="0.0.0.0", help="HTTP bind host")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
     parser.add_argument("--http-port", type=int, default=8080, help="HTTP port")
     parser.add_argument("--mock", action="store_true", help="Use mock data instead of serial input")
     parser.add_argument("--config", default=str(UNLOCK_CONFIG_PATH), help="Unlock config JSON path")
@@ -780,7 +1374,7 @@ def main() -> None:
     if not args.mock and serial is None:
         raise SystemExit("pyserial is required. Install with: pip3 install -r requirements.txt")
 
-    patch_state({
+    initial_state = {
         "bridge_mode": bridge_mode,
         "bridge_status": "STARTING",
         "robot_id": unlock_config.get("robot_id", "amr01"),
@@ -789,7 +1383,22 @@ def main() -> None:
         "unlock_message": "",
         **build_control_patch(),
         **build_arm_patch(),
-    })
+    }
+    if args.mock:
+        initial_state.update(
+            {
+                "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                "current_mode": RUN_MODE_AUTO,
+                "current_auto_stage": "IDLE",
+                "saved_auto_stage": "",
+                "resume_pending": False,
+                "manual_session_active": False,
+                "task_active": False,
+                "fault_latched": False,
+                "resume_note": "No saved task",
+            }
+        )
+    patch_state(initial_state)
 
     worker = threading.Thread(
         target=mock_reader_loop if args.mock else serial_reader_loop,

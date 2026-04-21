@@ -3,6 +3,14 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+/*
+  OBSOLETE / HISTORICAL REFERENCE
+
+  This sketch was written for the removed side-ultrasonic experiment
+  (left side + right side wall-distance observation).
+  Current hardware no longer installs those two side sensors.
+*/
+
 // 电机引脚沿用 reference.ino
 #define PWMA 12
 #define DIRA1 34
@@ -266,6 +274,9 @@ void updateOled() {
 void setup() {
   Serial.begin(115200);
 
+  Serial.println("OBSOLETE: side ultrasonic hardware was removed on 2026-04-21.");
+  Serial.println("Keep this sketch only as historical reference.");
+
   pinMode(PWMA, OUTPUT);
   pinMode(DIRA1, OUTPUT);
   pinMode(DIRA2, OUTPUT);
@@ -311,7 +322,7 @@ void setup() {
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
-  display.println("Ready");
+  display.println("OLD");
   display.display();
   delay(500);
 }

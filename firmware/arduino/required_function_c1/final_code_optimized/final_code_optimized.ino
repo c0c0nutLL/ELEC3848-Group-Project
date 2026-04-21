@@ -4,6 +4,18 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+/*
+  OBSOLETE / HISTORICAL REFERENCE
+
+  2026-04-21 hardware update:
+  - the left and right side ultrasonic sensors were removed from the robot
+  - straight-line control no longer uses side-wall distance or corridor guidance
+
+  This sketch is kept only as a historical Required Function branch because it
+  depends on side ultrasonic pins 28/25 and 30/32. Do not treat it as the
+  current hardware-valid implementation.
+*/
+
 // Motor pin mapping follows reference.ino and the existing test sketches.
 #define PWMA 12
 #define DIRA1 34
