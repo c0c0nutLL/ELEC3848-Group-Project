@@ -30,13 +30,15 @@
     [hidden]{display:none!important}
     button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
     .page{max-width:1380px;margin:0 auto;padding:24px}
-    .hero,.panel-head,.title-row,.arm-head,.log-title,.mode-actions,.task-meta,.power-meta{
+    .hero,.panel-head,.title-row,.arm-head,.log-title,.mode-actions,.task-meta,.power-meta,.hero-side,.hero-links{
       display:flex;
       justify-content:space-between;
       gap:12px;
       align-items:center
     }
     .hero{margin-bottom:16px}
+    .hero-side{flex-direction:column;align-items:flex-end}
+    .hero-links{flex-wrap:wrap;justify-content:flex-end}
     .hero h1,.panel-head h2,.module h3{margin:0}
     .hero p,.sub,.hint,.sidebar p,.log-meta{margin:6px 0 0;color:var(--muted);line-height:1.5}
     .pill,.btn,.mini,.step,.apply,.drive{
@@ -115,12 +117,51 @@
     .stack{display:grid;gap:14px}
     .module{padding:16px}
     .task-grid{display:grid;grid-template-columns:minmax(280px,1.1fr) minmax(240px,.9fr);gap:16px}
+    .task-select-grid{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,1.05fr);gap:16px}
     .task-box{
       padding:16px;
       border:1px solid var(--line);
       border-radius:16px;
       background:#f8faf7
     }
+    .task-option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+    .task-option{
+      width:100%;
+      display:grid;
+      gap:8px;
+      padding:14px;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:rgba(255,255,255,.72);
+      text-align:left;
+      cursor:pointer;
+      box-shadow:var(--shadow)
+    }
+    .task-option strong{font-size:16px}
+    .task-option span,.task-option small{color:var(--muted);line-height:1.45}
+    .task-option.active{
+      border-color:rgba(32,106,93,.36);
+      background:rgba(32,106,93,.1)
+    }
+    .task-option:hover{border-color:rgba(32,106,93,.28)}
+    .task-badge-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    .task-chip{
+      display:inline-flex;
+      align-items:center;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.75);
+      color:var(--muted);
+      font-size:13px
+    }
+    .task-chip.active{
+      border-color:rgba(32,106,93,.28);
+      background:rgba(32,106,93,.1);
+      color:var(--accent)
+    }
+    .task-state-cards{margin:14px 0}
+    .task-actions{margin-top:14px}
     .mode-actions{flex-wrap:wrap;align-items:flex-start}
     .task-meta{align-items:flex-start}
     .task-note{
@@ -171,12 +212,12 @@
       min-height:240px
     }
     @media (max-width:1100px){
-      .layout,.task-grid,.pad-wrap,.power-wrap,.bottom{grid-template-columns:1fr}
+      .layout,.task-grid,.task-select-grid,.pad-wrap,.power-wrap,.bottom{grid-template-columns:1fr}
       .sidebar{position:static}
     }
     @media (max-width:780px){
       .arm-grid{grid-template-columns:1fr}
-      .hero,.panel-head,.task-meta{flex-direction:column;align-items:flex-start}
+      .hero,.panel-head,.task-meta,.hero-side,.hero-links{flex-direction:column;align-items:flex-start}
       .page{padding:18px}
     }
   </style>
@@ -188,9 +229,20 @@
         <h1>AMR Telemetry Dashboard</h1>
         <p>Arduino -> USB Serial -> Jetson Nano -> Browser</p>
       </div>
-      <div class="pill">
-        <span id="live-dot" class="dot"></span>
-        <span id="live-text">Waiting for data</span>
+      <div class="hero-side">
+        <div class="hero-links">
+          <a class="mini" href="/">Home</a>
+          <a class="mini" href="/telemetry">Telemetry</a>
+          <a class="mini" href="/manual">Manual</a>
+          <a class="mini" href="/tasks">Tasks</a>
+          <a class="mini" href="/arm">Arm</a>
+          <a class="mini" href="/debug">Status / Debug</a>
+          <a class="mini" href="/unlock">Unlock</a>
+        </div>
+        <div class="pill">
+          <span id="live-dot" class="dot"></span>
+          <span id="live-text">Waiting for data</span>
+        </div>
       </div>
     </div>
 
@@ -222,7 +274,7 @@
       </aside>
 
       <main class="content">
-        <section class="panel">
+        <section id="telemetry-panel" class="panel">
           <div class="panel-head">
             <div>
               <div class="label">Status Monitor</div>
@@ -271,8 +323,52 @@
 
           <div class="stack">
             <section id="auto-panel" class="module">
-              <div class="label">Auto Task</div>
-              <h3>Interrupt / Resume Control</h3>
+              <div class="label">Task Coordination</div>
+              <h3>Task Selection And Interrupt / Resume</h3>
+              <div class="task-select-grid">
+                <div class="task-box">
+                  <div class="label">Task Selection</div>
+                  <h3>Mission Presets</h3>
+                  <div id="task-options" class="task-option-grid"></div>
+                </div>
+                <div class="task-box">
+                  <div class="task-meta">
+                    <div>
+                      <div class="label">Selected Task</div>
+                      <h3 id="task-selected-name">--</h3>
+                      <p id="task-selected-label" class="sub">--</p>
+                    </div>
+                    <div class="task-badge-row">
+                      <span id="task-backend-chip" class="task-chip">UI Placeholder</span>
+                      <span id="task-manual-chip" class="task-chip">Auto Task</span>
+                    </div>
+                  </div>
+                  <div class="label" style="margin-top:14px">Task Description</div>
+                  <p id="task-description" class="hint">Waiting for task catalog.</p>
+
+                  <div class="cards task-state-cards">
+                    <div class="card"><div class="label">Task Status</div><div id="task-status" class="value small">--</div></div>
+                    <div class="card"><div class="label">Current Stage</div><div id="task-current-stage" class="value small">--</div></div>
+                    <div class="card"><div class="label">Resume Available</div><div id="task-resume-available" class="value">--</div></div>
+                    <div class="card"><div class="label">Last Saved Stage</div><div id="task-saved-stage" class="value small">--</div></div>
+                    <div class="card"><div class="label">Obstacle Interrupt</div><div id="task-obstacle-interrupt" class="value">--</div></div>
+                    <div class="card"><div class="label">Obstacle Hook</div><div id="task-obstacle-enabled" class="value">--</div></div>
+                  </div>
+
+                  <div class="mode-actions task-actions">
+                    <button id="task-select-start" class="btn primary" type="button">Start Task</button>
+                    <button id="task-select-stop" class="btn warn" type="button">Stop Task / Cancel</button>
+                    <button id="task-select-resume" class="btn" type="button">Resume Task</button>
+                  </div>
+
+                  <div class="task-note" style="margin-top:14px">
+                    <strong id="task-selection-feedback-title">Task Selection Feedback</strong>
+                    <div id="task-selection-feedback" class="sub">This module is UI/API placeholder only. It does not yet launch the real Jetson or Arduino task runtime.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="label" style="margin-top:18px">Interrupt / Resume Demo</div>
               <div class="task-grid">
                 <div class="task-box">
                   <div class="mode-actions">
@@ -368,7 +464,7 @@
           </div>
         </section>
 
-        <div class="bottom">
+        <div id="debug-panel" class="bottom">
           <section class="panel">
             <div class="label">Recent Events</div>
             <h2>Live Event Log</h2>
@@ -406,6 +502,63 @@
       D: "RIGHT"
     };
     const modulesKey = "dashboard-module-preferences";
+    const defaultTaskCatalog = [
+      {
+        id: "FULL_MISSION",
+        label: "Full Mission",
+        name_zh: "全程任务",
+        summary: "直行 -> 取货 -> 开门放货 -> 送货 -> 用户取货",
+        description: "小车直行到取货点 RFID，执行抓取、开门、放入、关门、调头，再直行到送货点 RFID，等待扫码和密码开门，支持用户手动关门或 60 秒后自动关门。",
+        placeholder_entry_stage: "FULL_MISSION_PENDING",
+        supports_resume: true,
+        is_manual_test: false,
+        obstacle_interrupt_enabled: true
+      },
+      {
+        id: "OBSTACLE_MISSION",
+        label: "Obstacle Mission",
+        name_zh: "避障任务",
+        summary: "独立避障流程或测试占位",
+        description: "单独执行避障相关流程或调试路径。最终系统里，避障任务也可能作为其他任务的打断子任务插入，并在结束后返回原任务阶段或安全恢复点。",
+        placeholder_entry_stage: "OBSTACLE_TASK_PENDING",
+        supports_resume: true,
+        is_manual_test: false,
+        obstacle_interrupt_enabled: true
+      },
+      {
+        id: "PICKUP_MISSION",
+        label: "Pickup Mission",
+        name_zh: "抓取任务",
+        summary: "仅执行取货、开门、放入、关门",
+        description: "只执行取货相关动作，到达取货点后操控机械臂完成抓取、开门、放入、关门，不包含后续送货流程。",
+        placeholder_entry_stage: "PICKUP_TASK_PENDING",
+        supports_resume: true,
+        is_manual_test: false,
+        obstacle_interrupt_enabled: true
+      },
+      {
+        id: "DELIVERY_MISSION",
+        label: "Delivery Mission",
+        name_zh: "送货任务",
+        summary: "仅执行送货开门与取货等待",
+        description: "只执行送货相关部分，到达送货点后等待用户扫码和输入密码开门取货，支持用户手动关门，否则 60 秒后自动关门。",
+        placeholder_entry_stage: "DELIVERY_TASK_PENDING",
+        supports_resume: true,
+        is_manual_test: false,
+        obstacle_interrupt_enabled: true
+      },
+      {
+        id: "MANUAL_TEST",
+        label: "Manual Test",
+        name_zh: "人工测试",
+        summary: "不运行自动任务，只保留手动控制",
+        description: "不运行自动任务，只允许使用当前 UI 中已有的运动控制和机械臂控制功能手动操作小车。",
+        placeholder_entry_stage: "MANUAL_TEST_ONLY",
+        supports_resume: false,
+        is_manual_test: true,
+        obstacle_interrupt_enabled: false
+      }
+    ];
 
     const liveDot = document.getElementById("live-dot");
     const liveText = document.getElementById("live-text");
@@ -421,6 +574,24 @@
     const drivePanel = document.getElementById("drive-panel");
     const powerPanel = document.getElementById("power-panel");
     const armPanel = document.getElementById("arm-panel");
+
+    const taskOptions = document.getElementById("task-options");
+    const taskSelectedName = document.getElementById("task-selected-name");
+    const taskSelectedLabel = document.getElementById("task-selected-label");
+    const taskDescription = document.getElementById("task-description");
+    const taskStatus = document.getElementById("task-status");
+    const taskCurrentStage = document.getElementById("task-current-stage");
+    const taskResumeAvailable = document.getElementById("task-resume-available");
+    const taskSavedStage = document.getElementById("task-saved-stage");
+    const taskObstacleInterrupt = document.getElementById("task-obstacle-interrupt");
+    const taskObstacleEnabled = document.getElementById("task-obstacle-enabled");
+    const taskBackendChip = document.getElementById("task-backend-chip");
+    const taskManualChip = document.getElementById("task-manual-chip");
+    const taskSelectionFeedbackTitle = document.getElementById("task-selection-feedback-title");
+    const taskSelectionFeedback = document.getElementById("task-selection-feedback");
+    const taskSelectStartButton = document.getElementById("task-select-start");
+    const taskSelectStopButton = document.getElementById("task-select-stop");
+    const taskSelectResumeButton = document.getElementById("task-select-resume");
 
     const modeFeedbackTitle = document.getElementById("mode-feedback-title");
     const modeFeedback = document.getElementById("mode-feedback");
@@ -455,6 +626,19 @@
     let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 5};
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
+    let taskSelectionConfig = {
+      backend_binding: "placeholder_only",
+      api_paths: {
+        state: "/api/task-selection/state",
+        select: "/api/task-selection/select",
+        start: "/api/task-selection/start",
+        stop: "/api/task-selection/stop",
+        resume: "/api/task-selection/resume",
+        mock_update: "/api/task-selection/mock-update"
+      },
+      tasks: defaultTaskCatalog
+    };
+    let taskSelectionState = {};
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
@@ -473,6 +657,135 @@
       if (typeof value === "number" && key === "motor_pwm") return value + " / " + powerSlider.max;
       if (typeof value === "boolean") return value ? "true" : "false";
       return String(value);
+    }
+
+    function yesNo(value) {
+      return value ? "YES" : "NO";
+    }
+
+    function taskCatalog() {
+      return Array.isArray(taskSelectionConfig.tasks) && taskSelectionConfig.tasks.length > 0
+        ? taskSelectionConfig.tasks
+        : defaultTaskCatalog;
+    }
+
+    function taskDefinition(taskId) {
+      return taskCatalog().find((task) => String(task.id || "").toUpperCase() === String(taskId || "").toUpperCase()) || taskCatalog()[0];
+    }
+
+    function buildTaskSelectionState(taskId, overrides = {}) {
+      const task = taskDefinition(taskId || defaultTaskCatalog[0].id);
+      const state = {
+        selectedTask: task.id,
+        selectedTaskLabel: task.label,
+        selectedTaskName: task.name_zh || task.label,
+        taskDescription: task.description,
+        taskSummary: task.summary,
+        taskStatus: "IDLE",
+        currentStage: "NONE",
+        resumeAvailable: false,
+        savedStage: null,
+        isManualTest: Boolean(task.is_manual_test),
+        isObstacleInterruptEnabled: Boolean(task.obstacle_interrupt_enabled),
+        obstacleInterruptActive: false,
+        supportsResume: task.supports_resume !== false,
+        placeholderEntryStage: task.placeholder_entry_stage || "NONE",
+        backendConnected: false,
+        backendBinding: "placeholder_only",
+        statusSource: "MOCK_UI_ONLY",
+        lastAction: "INIT",
+        lastMessage: "Task selection placeholder is ready. No backend runtime is connected yet."
+      };
+      Object.assign(state, overrides || {});
+      state.selectedTask = task.id;
+      state.selectedTaskLabel = task.label;
+      state.selectedTaskName = task.name_zh || task.label;
+      state.taskDescription = task.description;
+      state.taskSummary = task.summary;
+      state.isManualTest = Boolean(task.is_manual_test);
+      state.isObstacleInterruptEnabled = Boolean(task.obstacle_interrupt_enabled);
+      state.supportsResume = task.supports_resume !== false;
+      state.placeholderEntryStage = task.placeholder_entry_stage || "NONE";
+      state.taskStatus = String(state.taskStatus || "IDLE").toUpperCase();
+      state.currentStage = String(state.currentStage || "NONE").toUpperCase();
+      state.savedStage = state.savedStage ? String(state.savedStage).toUpperCase() : null;
+      if (state.savedStage === "NONE") state.savedStage = null;
+      if (!state.supportsResume) {
+        state.savedStage = null;
+        state.resumeAvailable = false;
+      } else {
+        state.resumeAvailable = Boolean(state.resumeAvailable && state.savedStage);
+      }
+      state.obstacleInterruptActive = Boolean(state.obstacleInterruptActive);
+      state.backendConnected = Boolean(state.backendConnected);
+      state.backendBinding = String(state.backendBinding || "placeholder_only");
+      state.statusSource = String(state.statusSource || "MOCK_UI_ONLY");
+      state.lastAction = String(state.lastAction || "INIT").toUpperCase();
+      state.lastMessage = String(state.lastMessage || "");
+      return state;
+    }
+
+    function normalizeTaskSelectionState(rawState) {
+      const selectedTask = rawState && rawState.selectedTask ? rawState.selectedTask : defaultTaskCatalog[0].id;
+      return buildTaskSelectionState(selectedTask, rawState || {});
+    }
+
+    function renderTaskOptions() {
+      taskOptions.innerHTML = "";
+      taskCatalog().forEach((task) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "task-option";
+        if (String(taskSelectionState.selectedTask || "") === String(task.id)) {
+          button.classList.add("active");
+        }
+        button.innerHTML = `
+          <strong>${task.name_zh || task.label}</strong>
+          <span>${task.label}</span>
+          <small>${task.summary || ""}</small>
+        `;
+        button.addEventListener("click", () => {
+          void selectTask(task.id);
+        });
+        taskOptions.appendChild(button);
+      });
+    }
+
+    function syncTaskSelectionButtons() {
+      const hasSelection = Boolean(taskSelectionState.selectedTask);
+      const hasActivePlaceholder =
+        taskSelectionState.taskStatus !== "IDLE" ||
+        taskSelectionState.currentStage !== "NONE" ||
+        taskSelectionState.resumeAvailable;
+
+      taskSelectStartButton.disabled = !hasSelection;
+      taskSelectStopButton.disabled = !hasSelection || !hasActivePlaceholder;
+      taskSelectResumeButton.disabled = !taskSelectionState.supportsResume || !taskSelectionState.resumeAvailable;
+    }
+
+    function renderTaskSelection() {
+      if (!taskSelectionState.selectedTask) {
+        taskSelectionState = buildTaskSelectionState(defaultTaskCatalog[0].id);
+      }
+
+      taskSelectedName.textContent = taskSelectionState.selectedTaskName || "--";
+      taskSelectedLabel.textContent = taskSelectionState.selectedTaskLabel || "--";
+      taskDescription.textContent = taskSelectionState.taskDescription || "--";
+      taskStatus.textContent = taskSelectionState.taskStatus || "--";
+      taskCurrentStage.textContent = taskSelectionState.currentStage || "--";
+      taskResumeAvailable.textContent = yesNo(taskSelectionState.resumeAvailable);
+      taskSavedStage.textContent = taskSelectionState.savedStage || "--";
+      taskObstacleInterrupt.textContent = yesNo(taskSelectionState.obstacleInterruptActive);
+      taskObstacleEnabled.textContent = yesNo(taskSelectionState.isObstacleInterruptEnabled);
+      taskBackendChip.textContent = taskSelectionState.backendConnected ? "Backend Connected" : "UI Placeholder";
+      taskBackendChip.classList.toggle("active", !taskSelectionState.backendConnected);
+      taskManualChip.textContent = taskSelectionState.isManualTest ? "Manual Test" : "Auto Task";
+      taskManualChip.classList.toggle("active", taskSelectionState.isManualTest);
+      taskSelectionFeedbackTitle.textContent = "Task Selection Feedback";
+      taskSelectionFeedback.textContent = taskSelectionState.lastMessage || "Task selection placeholder ready.";
+
+      renderTaskOptions();
+      syncTaskSelectionButtons();
     }
 
     function saveModules() {
@@ -700,6 +1013,97 @@
       }
     }
 
+    async function loadTaskSelectionState() {
+      const path = (taskSelectionConfig.api_paths && taskSelectionConfig.api_paths.state) || "/api/task-selection/state";
+      try {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        taskSelectionState = normalizeTaskSelectionState(result);
+        renderTaskSelection();
+        return taskSelectionState;
+      } catch (error) {
+        taskSelectionFeedback.textContent = `Load task selection failed: ${error.message}`;
+        throw error;
+      }
+    }
+
+    async function postTaskSelection(path, payload) {
+      const result = await postJson(path, payload, taskSelectionFeedback).catch(() => null);
+      if (result && result.state) {
+        taskSelectionState = normalizeTaskSelectionState(result.state);
+        renderTaskSelection();
+      }
+      return result;
+    }
+
+    async function selectTask(taskId) {
+      const path = (taskSelectionConfig.api_paths && taskSelectionConfig.api_paths.select) || "/api/task-selection/select";
+      await postTaskSelection(path, {selectedTask: taskId, source: "dashboard-task-selection"});
+    }
+
+    async function startSelectedTask() {
+      const path = (taskSelectionConfig.api_paths && taskSelectionConfig.api_paths.start) || "/api/task-selection/start";
+      await postTaskSelection(path, {source: "dashboard-task-selection"});
+    }
+
+    async function stopSelectedTask() {
+      const path = (taskSelectionConfig.api_paths && taskSelectionConfig.api_paths.stop) || "/api/task-selection/stop";
+      await postTaskSelection(path, {source: "dashboard-task-selection"});
+    }
+
+    async function resumeSelectedTask() {
+      const path = (taskSelectionConfig.api_paths && taskSelectionConfig.api_paths.resume) || "/api/task-selection/resume";
+      await postTaskSelection(path, {source: "dashboard-task-selection"});
+    }
+
+    async function patchTaskSelectionRuntime(patch, source) {
+      const path = taskSelectionConfig.api_paths && taskSelectionConfig.api_paths.mock_update;
+      if (!path) {
+        taskSelectionState = normalizeTaskSelectionState({...taskSelectionState, ...patch});
+        renderTaskSelection();
+        return taskSelectionState;
+      }
+      const result = await postTaskSelection(path, {...patch, source: source || "dashboard-task-selection", action: "MOCK_UPDATE"});
+      return result && result.state ? result.state : taskSelectionState;
+    }
+
+    async function updateTaskStageDisplay(stage) {
+      return patchTaskSelectionRuntime({currentStage: stage || "NONE"}, "dashboard-stage-display");
+    }
+
+    async function setTaskSelectionStatus(status, message) {
+      return patchTaskSelectionRuntime(
+        {taskStatus: status || taskSelectionState.taskStatus, lastMessage: message || taskSelectionState.lastMessage},
+        "dashboard-task-status"
+      );
+    }
+
+    async function markObstacleInterruptActive(active) {
+      const fallbackStage =
+        taskSelectionState.currentStage === "OBSTACLE_INTERRUPT"
+          ? (taskSelectionState.savedStage || taskSelectionState.placeholderEntryStage || "NONE")
+          : taskSelectionState.currentStage;
+      return patchTaskSelectionRuntime(
+        {obstacleInterruptActive: Boolean(active), currentStage: active ? "OBSTACLE_INTERRUPT" : fallbackStage},
+        "dashboard-obstacle-interrupt"
+      );
+    }
+
+    async function markResumeAvailable(resumeAvailable, savedStage) {
+      return patchTaskSelectionRuntime(
+        {resumeAvailable: Boolean(resumeAvailable), savedStage: savedStage || null},
+        "dashboard-resume-flag"
+      );
+    }
+
+    async function getTaskSelectionState() {
+      if (!taskSelectionState.selectedTask) {
+        await loadTaskSelectionState();
+      }
+      return {...taskSelectionState};
+    }
+
     async function sendControl(direction, options = {}) {
       if (!manualControlsEnabled(lastPacket)) {
         controlFeedback.textContent = "Take manual control first.";
@@ -802,6 +1206,17 @@
         }
         if (config.mode_control) modeConfig = {...modeConfig, ...config.mode_control};
         if (config.task_control) taskConfig = {...taskConfig, ...config.task_control};
+        if (config.task_selection) {
+          taskSelectionConfig = {...taskSelectionConfig, ...config.task_selection};
+          if (config.task_selection.api_paths) {
+            taskSelectionConfig.api_paths = {...taskSelectionConfig.api_paths, ...config.task_selection.api_paths};
+          }
+          if (Array.isArray(config.task_selection.tasks) && config.task_selection.tasks.length > 0) {
+            taskSelectionConfig.tasks = config.task_selection.tasks;
+          }
+        }
+        taskSelectionState = normalizeTaskSelectionState(taskSelectionState.selectedTask ? taskSelectionState : {selectedTask: taskCatalog()[0].id});
+        renderTaskSelection();
       } catch (error) {
         console.error(error);
       }
@@ -889,6 +1304,16 @@
       }
     });
 
+    taskSelectStartButton.addEventListener("click", () => {
+      void startSelectedTask();
+    });
+    taskSelectStopButton.addEventListener("click", () => {
+      void stopSelectedTask();
+    });
+    taskSelectResumeButton.addEventListener("click", () => {
+      void resumeSelectedTask();
+    });
+
     window.addEventListener("blur", () => releaseDrive());
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) releaseDrive();
@@ -924,13 +1349,31 @@
       if (pressedDirection === direction) releaseDrive();
     });
 
+    window.taskSelectionApi = {
+      selectTask,
+      startSelectedTask,
+      stopSelectedTask,
+      resumeSelectedTask,
+      getTaskSelectionState,
+      loadTaskSelectionState,
+      updateTaskStageDisplay,
+      setTaskSelectionStatus,
+      markObstacleInterruptActive,
+      markResumeAvailable
+    };
+
     loadModules();
     syncModules();
-    loadConfig().then(() => loadInitial());
+    taskSelectionState = buildTaskSelectionState(defaultTaskCatalog[0].id);
+    renderTaskSelection();
+    loadConfig().then(() => Promise.all([loadInitial(), loadTaskSelectionState().catch(() => null)]));
     loadHistory();
     connectEvents();
     updatePower();
     updateArmLabels();
+    window.setInterval(() => {
+      void loadTaskSelectionState().catch(() => {});
+    }, 5000);
   </script>
 </body>
 </html>

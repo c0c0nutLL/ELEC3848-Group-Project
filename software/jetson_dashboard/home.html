@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMR Control Home</title>
+  <style>
+    :root{
+      --bg:#f3f1ea;
+      --panel:#fffdf8;
+      --line:#d7d1c4;
+      --text:#1d1c19;
+      --muted:#6d675c;
+      --accent:#206a5d;
+      --warn:#c0542f;
+      --shadow:0 10px 30px rgba(29,28,25,.05)
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+      background:
+        radial-gradient(circle at top left,#fff5d9 0,transparent 28%),
+        radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),
+        var(--bg);
+      color:var(--text)
+    }
+    a{text-decoration:none;color:inherit}
+    .page{max-width:1320px;margin:0 auto;padding:24px}
+    .hero,.hero-actions,.panel-head,.meta-row,.footer-links{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center
+    }
+    .hero{margin-bottom:18px}
+    .hero h1,.panel-head h2,.entry-card h3{margin:0}
+    .sub,.hint,.meta-note{margin:6px 0 0;color:var(--muted);line-height:1.5}
+    .pill,.mini,.quick-link,.entry-card,.panel,.status-card{
+      border:1px solid var(--line);
+      background:var(--panel);
+      box-shadow:var(--shadow)
+    }
+    .pill,.mini,.quick-link{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px
+    }
+    .pill{padding:10px 14px}
+    .mini,.quick-link{padding:10px 14px}
+    .hero-actions{flex-wrap:wrap;justify-content:flex-end}
+    .quick-link.primary{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.3);color:var(--accent);font-weight:700}
+    .quick-link.warn{background:#fff3ed;border-color:rgba(192,84,47,.24);color:var(--warn)}
+    .panel{
+      border-radius:18px;
+      padding:18px;
+      margin-bottom:16px
+    }
+    .label{
+      font-size:12px;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      margin-bottom:8px
+    }
+    .cards{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+      gap:12px;
+      margin-top:16px
+    }
+    .status-card{
+      border-radius:14px;
+      padding:14px;
+      background:rgba(255,255,255,.58)
+    }
+    .value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}
+    .entries{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+      gap:14px;
+      margin-top:16px
+    }
+    .entry-card{
+      display:grid;
+      gap:12px;
+      padding:18px;
+      border-radius:16px;
+      background:rgba(255,255,255,.65)
+    }
+    .entry-card:hover{border-color:rgba(32,106,93,.32)}
+    .entry-top,.entry-meta{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:flex-start
+    }
+    .entry-type,.entry-state{
+      display:inline-flex;
+      align-items:center;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      color:var(--muted);
+      font-size:13px;
+      background:rgba(255,255,255,.82)
+    }
+    .entry-state.live{
+      color:var(--accent);
+      border-color:rgba(32,106,93,.28);
+      background:rgba(32,106,93,.1)
+    }
+    .entry-action{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:max-content;
+      padding:10px 14px;
+      border-radius:999px;
+      background:rgba(32,106,93,.12);
+      border:1px solid rgba(32,106,93,.28);
+      color:var(--accent);
+      font-weight:700
+    }
+    .footer-links{flex-wrap:wrap;justify-content:flex-start;margin-top:12px}
+    @media (max-width:900px){
+      .hero,.panel-head,.entry-top,.entry-meta{flex-direction:column;align-items:flex-start}
+      .hero-actions{justify-content:flex-start}
+    }
+    @media (max-width:700px){
+      .page{padding:18px}
+      .entries,.cards{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <div class="label">Unified Entry</div>
+        <h1>AMR Control Home</h1>
+        <p class="sub">Central entry for Jetson dashboard pages, task selection, manual control, unlock, and debug views. Most control functions currently live inside the unified dashboard page and are exposed here through stable URLs.</p>
+      </div>
+      <div class="hero-actions">
+        <a class="quick-link primary" href="/dashboard">Open Full Dashboard</a>
+        <a class="quick-link warn" href="/unlock">Open Unlock Page</a>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">System Snapshot</div>
+          <h2>Current System Status</h2>
+          <p class="sub">This page reuses the existing Jetson APIs and shows the current bridge, mode, and task-selection placeholder state.</p>
+        </div>
+        <div class="pill"><span id="status-updated">Waiting for status</span></div>
+      </div>
+
+      <div class="cards">
+        <div class="status-card"><div class="label">Robot State</div><div id="robot-state" class="value">--</div></div>
+        <div class="status-card"><div class="label">Bridge</div><div id="bridge-status" class="value">--</div></div>
+        <div class="status-card"><div class="label">Run Mode</div><div id="run-mode" class="value">--</div></div>
+        <div class="status-card"><div class="label">Auto Stage</div><div id="auto-stage" class="value">--</div></div>
+        <div class="status-card"><div class="label">Selected Task</div><div id="selected-task" class="value">--</div></div>
+        <div class="status-card"><div class="label">Task Status</div><div id="task-status" class="value">--</div></div>
+      </div>
+
+      <p id="status-note" class="meta-note">Loading routes and live status.</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">Navigation</div>
+          <h2>Main Entry Points</h2>
+          <p class="sub">Use these cards to jump to real pages or to anchored sections inside the current dashboard. This keeps the URL structure stable before the UI is split further.</p>
+        </div>
+      </div>
+
+      <div id="entry-grid" class="entries"></div>
+
+      <div class="footer-links">
+        <a class="mini" href="/dashboard">Dashboard</a>
+        <a class="mini" href="/telemetry">Telemetry</a>
+        <a class="mini" href="/manual">Manual</a>
+        <a class="mini" href="/tasks">Tasks</a>
+        <a class="mini" href="/arm">Arm</a>
+        <a class="mini" href="/debug">Status / Debug</a>
+        <a class="mini" href="/unlock">Unlock</a>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const defaultRoutes = {
+      home: "/",
+      dashboard: "/dashboard",
+      telemetry: "/telemetry",
+      manual: "/manual",
+      tasks: "/tasks",
+      arm: "/arm",
+      status: "/status",
+      debug: "/debug",
+      unlock: "/unlock"
+    };
+
+    const entries = [
+      {
+        title: "Telemetry",
+        routeKey: "telemetry",
+        type: "Dashboard Section",
+        state: "Live",
+        description: "Open the live telemetry and top-level robot status view inside the existing dashboard."
+      },
+      {
+        title: "Manual Control",
+        routeKey: "manual",
+        type: "Dashboard Section",
+        state: "Live",
+        description: "Jump to the existing drive-pad and chassis control area without changing the current dashboard architecture."
+      },
+      {
+        title: "Unlock",
+        routeKey: "unlock",
+        type: "Standalone Page",
+        state: "Live",
+        description: "Open the fixed-password cargo unlock page that already talks to the Jetson unlock API."
+      },
+      {
+        title: "Task Selection",
+        routeKey: "tasks",
+        type: "Dashboard Section",
+        state: "Live",
+        description: "Open the new task-selection placeholder module and its reserved task-state APIs."
+      },
+      {
+        title: "Arm Control",
+        routeKey: "arm",
+        type: "Dashboard Section",
+        state: "Live",
+        description: "Jump to the existing two-servo arm control block inside the combined dashboard page."
+      },
+      {
+        title: "System Status / Debug",
+        routeKey: "debug",
+        type: "Dashboard Section",
+        state: "Live",
+        description: "Open the current event log and raw telemetry area for debugging and integration checks."
+      },
+      {
+        title: "Full Dashboard",
+        routeKey: "dashboard",
+        type: "Standalone Page",
+        state: "Live",
+        description: "Open the full combined dashboard with telemetry, task control, manual drive, power, and arm controls."
+      }
+    ];
+
+    const entryGrid = document.getElementById("entry-grid");
+    const statusUpdated = document.getElementById("status-updated");
+    const statusNote = document.getElementById("status-note");
+    const robotState = document.getElementById("robot-state");
+    const bridgeStatus = document.getElementById("bridge-status");
+    const runMode = document.getElementById("run-mode");
+    const autoStage = document.getElementById("auto-stage");
+    const selectedTask = document.getElementById("selected-task");
+    const taskStatus = document.getElementById("task-status");
+
+    let routes = {...defaultRoutes};
+
+    function fmt(value) {
+      if (value === undefined || value === null || value === "") return "--";
+      return String(value);
+    }
+
+    function renderEntries() {
+      entryGrid.innerHTML = "";
+      entries.forEach((entry) => {
+        const href = routes[entry.routeKey] || defaultRoutes[entry.routeKey] || "#";
+        const card = document.createElement("a");
+        card.className = "entry-card";
+        card.href = href;
+        card.innerHTML = `
+          <div class="entry-top">
+            <div>
+              <div class="label">Entry</div>
+              <h3>${entry.title}</h3>
+            </div>
+            <span class="entry-type">${entry.type}</span>
+          </div>
+          <div class="entry-meta">
+            <span class="entry-state ${entry.state === "Live" ? "live" : ""}">${entry.state}</span>
+            <span class="entry-type">${href}</span>
+          </div>
+          <div class="sub">${entry.description}</div>
+          <div class="entry-action">Open</div>
+        `;
+        entryGrid.appendChild(card);
+      });
+    }
+
+    async function loadConfig() {
+      try {
+        const response = await fetch("/api/config");
+        if (!response.ok) return;
+        const config = await response.json();
+        if (config.http_paths) {
+          routes = {...routes, ...config.http_paths};
+        }
+        renderEntries();
+        statusNote.textContent = `Robot ID: ${fmt(config.robot_id)}  |  Unlock Mode: ${fmt(config.unlock_mode)}`;
+      } catch (error) {
+        statusNote.textContent = `Failed to load config: ${error.message}`;
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const [stateRes, taskRes] = await Promise.all([
+          fetch("/api/state"),
+          fetch("/api/task-selection/state")
+        ]);
+        const state = stateRes.ok ? await stateRes.json() : {};
+        const task = taskRes.ok ? await taskRes.json() : {};
+
+        robotState.textContent = fmt(state.state);
+        bridgeStatus.textContent = fmt(state.bridge_status);
+        runMode.textContent = fmt(state.current_mode);
+        autoStage.textContent = fmt(state.current_auto_stage);
+        selectedTask.textContent = fmt(task.selectedTaskName || task.selectedTask);
+        taskStatus.textContent = fmt(task.taskStatus);
+        statusUpdated.textContent = "Updated: " + new Date().toLocaleTimeString();
+      } catch (error) {
+        statusUpdated.textContent = "Status unavailable";
+        statusNote.textContent = `Failed to load status: ${error.message}`;
+      }
+    }
+
+    renderEntries();
+    loadConfig().then(() => refreshStatus());
+    window.setInterval(() => {
+      void refreshStatus();
+    }, 3000);
+  </script>
+</body>
+</html>

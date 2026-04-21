@@ -19,6 +19,7 @@ except ImportError:
 
 
 BASE_DIR = Path(__file__).resolve().parent
+HOME_HTML = BASE_DIR / "home.html"
 DASHBOARD_HTML = BASE_DIR / "dashboard.html"
 UNLOCK_HTML = BASE_DIR / "unlock.html"
 UNLOCK_CONFIG_PATH = BASE_DIR / "unlock_config.json"
@@ -35,6 +36,96 @@ ALLOWED_DRIVE_DIRECTIONS = {"STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT"}
 ALLOWED_ARM_JOINTS = {"LIFT", "GRIP"}
 ALLOWED_MODE_ACTIONS = {"TAKE_MANUAL", "RESUME_AUTO", "ABORT_TASK"}
 ALLOWED_TASK_ACTIONS = {"START", "ABORT"}
+TASK_SELECTION_TASKS = {
+    "FULL_MISSION": {
+        "label": "Full Mission",
+        "name_zh": "全程任务",
+        "summary": "Pickup + door cycle + delivery placeholder flow.",
+        "description": (
+            "Drive to the pickup RFID point, perform grasp / open-door / place-cargo / close-door, "
+            "then turn back, drive to the delivery RFID point, and wait for scan + password unlock."
+        ),
+        "default_stage": "FULL_MISSION_PENDING",
+        "supports_resume": True,
+        "is_manual_test": False,
+        "obstacle_interrupt_enabled": True,
+    },
+    "OBSTACLE_MISSION": {
+        "label": "Obstacle Mission",
+        "name_zh": "避障任务",
+        "summary": "Standalone obstacle-avoidance validation path.",
+        "description": (
+            "Run obstacle-detection and avoidance as an isolated test task. "
+            "In the final system this may also interrupt other tasks and return to a saved safe stage."
+        ),
+        "default_stage": "OBSTACLE_TASK_PENDING",
+        "supports_resume": True,
+        "is_manual_test": False,
+        "obstacle_interrupt_enabled": True,
+    },
+    "PICKUP_MISSION": {
+        "label": "Pickup Mission",
+        "name_zh": "抓取任务",
+        "summary": "Pickup-only mission placeholder.",
+        "description": (
+            "Run the pickup-side flow only: arrive at the pickup point, operate the arm, open the cargo door, "
+            "place the item, and close the door."
+        ),
+        "default_stage": "PICKUP_TASK_PENDING",
+        "supports_resume": True,
+        "is_manual_test": False,
+        "obstacle_interrupt_enabled": True,
+    },
+    "DELIVERY_MISSION": {
+        "label": "Delivery Mission",
+        "name_zh": "送货任务",
+        "summary": "Delivery-only mission placeholder.",
+        "description": (
+            "Run the delivery-side flow only: arrive at the delivery point, wait for scan + password unlock, "
+            "allow manual door close, or auto-close after 60 seconds."
+        ),
+        "default_stage": "DELIVERY_TASK_PENDING",
+        "supports_resume": True,
+        "is_manual_test": False,
+        "obstacle_interrupt_enabled": True,
+    },
+    "MANUAL_TEST": {
+        "label": "Manual Test",
+        "name_zh": "人工测试",
+        "summary": "UI-only manual chassis and arm operation.",
+        "description": (
+            "Do not run an automatic mission. Only allow manual drive and arm operations from the dashboard."
+        ),
+        "default_stage": "MANUAL_TEST_ONLY",
+        "supports_resume": False,
+        "is_manual_test": True,
+        "obstacle_interrupt_enabled": False,
+    },
+}
+TASK_SELECTION_STATUS_VALUES = ("IDLE", "START_REQUESTED", "STOPPED", "RESUME_REQUESTED")
+TASK_SELECTION_STATE_FIELDS = [
+    "selectedTask",
+    "selectedTaskLabel",
+    "selectedTaskName",
+    "taskDescription",
+    "taskSummary",
+    "taskStatus",
+    "currentStage",
+    "resumeAvailable",
+    "savedStage",
+    "isManualTest",
+    "isObstacleInterruptEnabled",
+    "obstacleInterruptActive",
+    "supportsResume",
+    "placeholderEntryStage",
+    "backendConnected",
+    "backendBinding",
+    "statusSource",
+    "lastAction",
+    "lastMessage",
+    "lastUpdatedMs",
+]
+DEFAULT_TASK_SELECTION_TASK = "FULL_MISSION"
 DEFAULT_DRIVE_POWER = 96
 MAX_DRIVE_POWER = 255
 MIN_ARM_ANGLE_DEG = 0
@@ -55,6 +146,7 @@ clients_lock = threading.Lock()
 unlock_lock = threading.Lock()
 control_lock = threading.Lock()
 arm_lock = threading.Lock()
+task_selection_lock = threading.Lock()
 
 latest_state = {}  # type: Dict[str, Any]
 state_history = deque(maxlen=100)  # type: Deque[Dict[str, Any]]
@@ -85,6 +177,7 @@ mock_sensor_state = {
     "right_cm": 92.0,
     "left_cm": 89.0,
 }  # type: Dict[str, float]
+task_selection_state = {}  # type: Dict[str, Any]
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -175,6 +268,123 @@ def normalize_task_action(raw_action: Any) -> str:
     if action not in ALLOWED_TASK_ACTIONS:
         raise ValueError(f"action must be one of {sorted(ALLOWED_TASK_ACTIONS)}")
     return action
+
+
+def normalize_task_selection_id(raw_task: Any) -> str:
+    task_id = str(raw_task or "").strip().upper()
+    if task_id not in TASK_SELECTION_TASKS:
+        raise ValueError(f"selectedTask must be one of {list(TASK_SELECTION_TASKS.keys())}")
+    return task_id
+
+
+def build_task_selection_catalog() -> List[Dict[str, Any]]:
+    catalog = []
+    for task_id, definition in TASK_SELECTION_TASKS.items():
+        catalog.append(
+            {
+                "id": task_id,
+                "label": definition["label"],
+                "name_zh": definition["name_zh"],
+                "summary": definition["summary"],
+                "description": definition["description"],
+                "placeholder_entry_stage": definition["default_stage"],
+                "supports_resume": bool(definition["supports_resume"]),
+                "is_manual_test": bool(definition["is_manual_test"]),
+                "obstacle_interrupt_enabled": bool(definition["obstacle_interrupt_enabled"]),
+            }
+        )
+    return catalog
+
+
+def build_task_selection_state(
+    selected_task: Optional[str] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    task_id = selected_task or DEFAULT_TASK_SELECTION_TASK
+    if task_id not in TASK_SELECTION_TASKS:
+        task_id = DEFAULT_TASK_SELECTION_TASK
+
+    definition = TASK_SELECTION_TASKS[task_id]
+    state = {
+        "selectedTask": task_id,
+        "selectedTaskLabel": definition["label"],
+        "selectedTaskName": definition["name_zh"],
+        "taskDescription": definition["description"],
+        "taskSummary": definition["summary"],
+        "taskStatus": "IDLE",
+        "currentStage": "NONE",
+        "resumeAvailable": False,
+        "savedStage": None,
+        "isManualTest": bool(definition["is_manual_test"]),
+        "isObstacleInterruptEnabled": bool(definition["obstacle_interrupt_enabled"]),
+        "obstacleInterruptActive": False,
+        "supportsResume": bool(definition["supports_resume"]),
+        "placeholderEntryStage": definition["default_stage"],
+        "backendConnected": False,
+        "backendBinding": "placeholder_only",
+        "statusSource": "MOCK_UI_ONLY",
+        "lastAction": "INIT",
+        "lastMessage": "Task selection placeholder is ready. No Jetson/Arduino task runtime is connected yet.",
+    }  # type: Dict[str, Any]
+
+    if overrides:
+        state.update(overrides)
+
+    state["selectedTask"] = task_id
+    state["selectedTaskLabel"] = definition["label"]
+    state["selectedTaskName"] = definition["name_zh"]
+    state["taskDescription"] = definition["description"]
+    state["taskSummary"] = definition["summary"]
+    state["isManualTest"] = bool(definition["is_manual_test"])
+    state["isObstacleInterruptEnabled"] = bool(definition["obstacle_interrupt_enabled"])
+    state["supportsResume"] = bool(definition["supports_resume"])
+    state["placeholderEntryStage"] = definition["default_stage"]
+
+    state["taskStatus"] = str(state.get("taskStatus", "IDLE") or "IDLE").strip().upper()
+    current_stage = str(state.get("currentStage", "NONE") or "NONE").strip().upper()
+    state["currentStage"] = current_stage if current_stage else "NONE"
+
+    saved_stage = state.get("savedStage")
+    if saved_stage is None:
+        normalized_saved_stage = None
+    else:
+        normalized_saved_stage = str(saved_stage).strip().upper() or None
+        if normalized_saved_stage == "NONE":
+            normalized_saved_stage = None
+
+    if not state["supportsResume"]:
+        normalized_saved_stage = None
+        state["resumeAvailable"] = False
+
+    state["savedStage"] = normalized_saved_stage
+    state["resumeAvailable"] = bool(state.get("resumeAvailable")) and bool(normalized_saved_stage)
+    state["obstacleInterruptActive"] = bool(state.get("obstacleInterruptActive", False))
+    state["backendConnected"] = bool(state.get("backendConnected", False))
+    state["backendBinding"] = str(state.get("backendBinding", "placeholder_only") or "placeholder_only")
+    state["statusSource"] = str(state.get("statusSource", "MOCK_UI_ONLY") or "MOCK_UI_ONLY")
+    state["lastAction"] = str(state.get("lastAction", "INIT") or "INIT").strip().upper()
+    state["lastMessage"] = str(state.get("lastMessage", "") or "")
+    state["lastUpdatedMs"] = current_time_ms()
+    return state
+
+
+def get_task_selection_state() -> Dict[str, Any]:
+    with task_selection_lock:
+        if not task_selection_state:
+            task_selection_state.update(build_task_selection_state())
+        return dict(task_selection_state)
+
+
+def patch_task_selection_state(patch: Dict[str, Any]) -> Dict[str, Any]:
+    with task_selection_lock:
+        base_state = dict(task_selection_state) if task_selection_state else build_task_selection_state()
+        merged_state = dict(base_state)
+        merged_state.update(patch)
+        next_task = str(merged_state.get("selectedTask", DEFAULT_TASK_SELECTION_TASK) or DEFAULT_TASK_SELECTION_TASK)
+        next_state = build_task_selection_state(next_task, merged_state)
+        task_selection_state.clear()
+        task_selection_state.update(next_state)
+        return dict(task_selection_state)
 
 
 def get_state_snapshot() -> Dict[str, Any]:
@@ -824,6 +1034,238 @@ def trigger_mode_action(
     )
 
 
+def trigger_task_selection_select(
+    task_raw: Any,
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    try:
+        task_id = normalize_task_selection_id(task_raw)
+    except ValueError as exc:
+        return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    definition = TASK_SELECTION_TASKS[task_id]
+    snapshot = patch_task_selection_state(
+        {
+            "selectedTask": task_id,
+            "taskStatus": "IDLE",
+            "currentStage": "NONE",
+            "resumeAvailable": False,
+            "savedStage": None,
+            "obstacleInterruptActive": False,
+            "lastAction": "SELECT",
+            "lastClient": client_ip,
+            "lastSource": source,
+            "lastMessage": (
+                f"{definition['label']} selected. This is a UI placeholder only; "
+                "the real Jetson/Arduino task runtime is not wired yet."
+            ),
+        }
+    )
+    return (
+        True,
+        {
+            "ok": True,
+            "message": snapshot["lastMessage"],
+            "state": snapshot,
+        },
+        HTTPStatus.OK,
+    )
+
+
+def trigger_task_selection_start(
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    snapshot = get_task_selection_state()
+    task_id = str(snapshot.get("selectedTask", DEFAULT_TASK_SELECTION_TASK))
+    definition = TASK_SELECTION_TASKS.get(task_id, TASK_SELECTION_TASKS[DEFAULT_TASK_SELECTION_TASK])
+
+    placeholder_stage = str(definition["default_stage"])
+    if bool(definition["is_manual_test"]):
+        placeholder_stage = "MANUAL_TEST_ONLY"
+
+    next_state = patch_task_selection_state(
+        {
+            "selectedTask": task_id,
+            "taskStatus": "START_REQUESTED",
+            "currentStage": placeholder_stage,
+            "resumeAvailable": False,
+            "savedStage": None,
+            "obstacleInterruptActive": False,
+            "lastAction": "START",
+            "lastClient": client_ip,
+            "lastSource": source,
+            "lastMessage": (
+                f"Start requested for {definition['label']}. Placeholder only; "
+                "no real task state machine is attached to this API yet."
+            ),
+        }
+    )
+    return (
+        True,
+        {
+            "ok": True,
+            "message": next_state["lastMessage"],
+            "state": next_state,
+        },
+        HTTPStatus.OK,
+    )
+
+
+def trigger_task_selection_stop(
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    snapshot = get_task_selection_state()
+    task_id = str(snapshot.get("selectedTask", DEFAULT_TASK_SELECTION_TASK))
+    definition = TASK_SELECTION_TASKS.get(task_id, TASK_SELECTION_TASKS[DEFAULT_TASK_SELECTION_TASK])
+    current_stage = str(snapshot.get("currentStage", "NONE") or "NONE").strip().upper()
+    can_resume = bool(definition["supports_resume"]) and current_stage not in {"", "NONE"}
+    saved_stage = current_stage if can_resume else None
+
+    next_state = patch_task_selection_state(
+        {
+            "selectedTask": task_id,
+            "taskStatus": "STOPPED",
+            "currentStage": "NONE",
+            "resumeAvailable": can_resume,
+            "savedStage": saved_stage,
+            "obstacleInterruptActive": False,
+            "lastAction": "STOP",
+            "lastClient": client_ip,
+            "lastSource": source,
+            "lastMessage": (
+                f"Stop requested for {definition['label']}. "
+                + (
+                    f"Saved placeholder stage: {saved_stage}."
+                    if saved_stage
+                    else "No resumable placeholder stage is available."
+                )
+            ),
+        }
+    )
+    return (
+        True,
+        {
+            "ok": True,
+            "message": next_state["lastMessage"],
+            "state": next_state,
+        },
+        HTTPStatus.OK,
+    )
+
+
+def trigger_task_selection_resume(
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    snapshot = get_task_selection_state()
+    task_id = str(snapshot.get("selectedTask", DEFAULT_TASK_SELECTION_TASK))
+    if not bool(snapshot.get("supportsResume")):
+        return (
+            False,
+            {"ok": False, "message": "the selected task does not expose resume in the current placeholder design"},
+            HTTPStatus.CONFLICT,
+        )
+
+    saved_stage = snapshot.get("savedStage")
+    if not saved_stage or not bool(snapshot.get("resumeAvailable")):
+        return (
+            False,
+            {"ok": False, "message": "no placeholder saved stage is available for resume"},
+            HTTPStatus.CONFLICT,
+        )
+
+    definition = TASK_SELECTION_TASKS.get(task_id, TASK_SELECTION_TASKS[DEFAULT_TASK_SELECTION_TASK])
+    next_state = patch_task_selection_state(
+        {
+            "selectedTask": task_id,
+            "taskStatus": "RESUME_REQUESTED",
+            "currentStage": saved_stage,
+            "resumeAvailable": False,
+            "savedStage": saved_stage,
+            "obstacleInterruptActive": False,
+            "lastAction": "RESUME",
+            "lastClient": client_ip,
+            "lastSource": source,
+            "lastMessage": (
+                f"Resume requested for {definition['label']} from placeholder stage {saved_stage}. "
+                "This remains UI-only until the runtime is connected."
+            ),
+        }
+    )
+    return (
+        True,
+        {
+            "ok": True,
+            "message": next_state["lastMessage"],
+            "state": next_state,
+        },
+        HTTPStatus.OK,
+    )
+
+
+def trigger_task_selection_mock_update(
+    data: Dict[str, Any],
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    patch = {}  # type: Dict[str, Any]
+
+    if "selectedTask" in data:
+        try:
+            patch["selectedTask"] = normalize_task_selection_id(data.get("selectedTask"))
+        except ValueError as exc:
+            return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    if "taskStatus" in data:
+        task_status = str(data.get("taskStatus", "") or "").strip().upper()
+        if not task_status:
+            return False, {"ok": False, "message": "taskStatus cannot be empty"}, HTTPStatus.BAD_REQUEST
+        patch["taskStatus"] = task_status
+
+    if "currentStage" in data:
+        patch["currentStage"] = str(data.get("currentStage", "NONE") or "NONE").strip().upper() or "NONE"
+
+    if "savedStage" in data:
+        raw_saved_stage = data.get("savedStage")
+        if raw_saved_stage in (None, "", "NONE"):
+            patch["savedStage"] = None
+        else:
+            patch["savedStage"] = str(raw_saved_stage).strip().upper()
+
+    if "resumeAvailable" in data:
+        patch["resumeAvailable"] = bool(data.get("resumeAvailable"))
+
+    if "obstacleInterruptActive" in data:
+        patch["obstacleInterruptActive"] = bool(data.get("obstacleInterruptActive"))
+
+    if "lastMessage" in data:
+        patch["lastMessage"] = str(data.get("lastMessage", "") or "")
+
+    if not patch:
+        return False, {"ok": False, "message": "no mock task-selection fields were provided"}, HTTPStatus.BAD_REQUEST
+
+    patch["statusSource"] = "MOCK_UI_ONLY"
+    patch["backendConnected"] = False
+    patch["backendBinding"] = "placeholder_only"
+    patch["lastAction"] = str(data.get("action", "MOCK_UPDATE") or "MOCK_UPDATE").strip().upper()
+    patch["lastClient"] = client_ip
+    patch["lastSource"] = source
+
+    next_state = patch_task_selection_state(patch)
+    return (
+        True,
+        {
+            "ok": True,
+            "message": next_state["lastMessage"] or "task selection placeholder updated",
+            "state": next_state,
+        },
+        HTTPStatus.OK,
+    )
+
+
 def serial_reader_loop(port: str, baudrate: int) -> None:
     if serial is None:
         raise RuntimeError("pyserial is not installed")
@@ -1079,11 +1521,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         if parsed.path == "/":
+            self.serve_file(HOME_HTML)
+            return
+
+        if parsed.path == "/home":
+            self.serve_file(HOME_HTML)
+            return
+
+        if parsed.path == "/dashboard":
             self.serve_file(DASHBOARD_HTML)
             return
 
         if parsed.path == "/unlock":
             self.serve_file(UNLOCK_HTML)
+            return
+
+        if parsed.path == "/telemetry":
+            self.redirect("/dashboard#telemetry-panel")
+            return
+
+        if parsed.path == "/manual":
+            self.redirect("/dashboard#drive-panel")
+            return
+
+        if parsed.path == "/tasks":
+            self.redirect("/dashboard#auto-panel")
+            return
+
+        if parsed.path == "/arm":
+            self.redirect("/dashboard#arm-panel")
+            return
+
+        if parsed.path == "/status":
+            self.redirect("/dashboard#telemetry-panel")
+            return
+
+        if parsed.path == "/debug":
+            self.redirect("/dashboard#debug-panel")
             return
 
         if parsed.path == "/api/state":
@@ -1096,6 +1570,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/unlock/history":
             self.serve_unlock_history()
+            return
+
+        if parsed.path == "/api/task-selection/state":
+            self.serve_task_selection_state()
             return
 
         if parsed.path == "/api/config":
@@ -1131,6 +1609,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.handle_task_post()
             return
 
+        if parsed.path == "/api/task-selection/select":
+            self.handle_task_selection_select_post()
+            return
+
+        if parsed.path == "/api/task-selection/start":
+            self.handle_task_selection_start_post()
+            return
+
+        if parsed.path == "/api/task-selection/stop":
+            self.handle_task_selection_stop_post()
+            return
+
+        if parsed.path == "/api/task-selection/resume":
+            self.handle_task_selection_resume_post()
+            return
+
+        if parsed.path == "/api/task-selection/mock-update":
+            self.handle_task_selection_mock_update_post()
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -1141,6 +1639,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+
+    def redirect(self, location: str, status: HTTPStatus = HTTPStatus.FOUND) -> None:
+        body = (
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+            f"<meta http-equiv=\"refresh\" content=\"0; url={location}\">"
+            f"<title>Redirect</title></head><body>Redirecting to <a href=\"{location}\">{location}</a>.</body></html>"
+        ).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Location", location)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def serve_file(self, path: Path) -> None:
         raw = path.read_bytes()
@@ -1165,13 +1677,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = list(unlock_history)
         self.send_json(payload)
 
+    def serve_task_selection_state(self) -> None:
+        self.send_json(get_task_selection_state())
+
     def serve_public_config(self) -> None:
         payload = {
             "robot_id": unlock_config.get("robot_id", "amr01"),
             "unlock_mode": unlock_config.get("unlock_mode", "fixed"),
             "http_paths": {
-                "dashboard": "/",
+                "home": "/",
+                "dashboard": "/dashboard",
                 "unlock": "/unlock",
+                "telemetry": "/telemetry",
+                "manual": "/manual",
+                "tasks": "/tasks",
+                "arm": "/arm",
+                "status": "/status",
+                "debug": "/debug",
             },
             "manual_control": {
                 "api_path": "/api/control",
@@ -1201,6 +1723,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "api_path": "/api/task",
                 "actions": sorted(ALLOWED_TASK_ACTIONS),
                 "loopback_only": True,
+            },
+            "task_selection": {
+                "backend_binding": "placeholder_only",
+                "api_paths": {
+                    "state": "/api/task-selection/state",
+                    "select": "/api/task-selection/select",
+                    "start": "/api/task-selection/start",
+                    "stop": "/api/task-selection/stop",
+                    "resume": "/api/task-selection/resume",
+                    "mock_update": "/api/task-selection/mock-update",
+                },
+                "tasks": build_task_selection_catalog(),
+                "status_values": list(TASK_SELECTION_STATUS_VALUES),
+                "state_fields": list(TASK_SELECTION_STATE_FIELDS),
+                "loopback_only_for_post": True,
+                "notes": [
+                    "This is a UI/task-interface placeholder only.",
+                    "No real Jetson/Arduino task runtime is attached yet.",
+                    "mock_update is reserved for future runtime-to-UI state sync.",
+                ],
             },
             "interrupt_resume": {
                 "protocol_version": MODE_PROTOCOL_VERSION,
@@ -1352,6 +1894,102 @@ class DashboardHandler(BaseHTTPRequestHandler):
         ok, payload, status = trigger_task_action(action, client_ip, source=source)
         self.send_json(payload, status)
 
+    def handle_task_selection_select_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "task selection is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        selected_task = data.get("selectedTask", "")
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_task_selection_select(selected_task, client_ip, source=source)
+        self.send_json(payload, status)
+
+    def handle_task_selection_start_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "task selection start is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_task_selection_start(client_ip, source=source)
+        self.send_json(payload, status)
+
+    def handle_task_selection_stop_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "task selection stop is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_task_selection_stop(client_ip, source=source)
+        self.send_json(payload, status)
+
+    def handle_task_selection_resume_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "task selection resume is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_task_selection_resume(client_ip, source=source)
+        self.send_json(payload, status)
+
+    def handle_task_selection_mock_update_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not is_loopback_client(client_ip):
+            self.send_json(
+                {"ok": False, "message": "task selection mock update is only allowed from loopback clients"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_task_selection_mock_update(data, client_ip, source=source)
+        self.send_json(payload, status)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Jetson Nano serial telemetry dashboard")
@@ -1399,6 +2037,7 @@ def main() -> None:
             }
         )
     patch_state(initial_state)
+    patch_task_selection_state({})
 
     worker = threading.Thread(
         target=mock_reader_loop if args.mock else serial_reader_loop,
@@ -1408,7 +2047,8 @@ def main() -> None:
     worker.start()
 
     server = ThreadedHTTPServer((args.host, args.http_port), DashboardHandler)
-    print(f"[http] dashboard ready at http://{args.host}:{args.http_port}")
+    print(f"[http] home ready at http://{args.host}:{args.http_port}/")
+    print(f"[http] dashboard ready at http://{args.host}:{args.http_port}/dashboard")
     print(f"[http] unlock page ready at http://{args.host}:{args.http_port}/unlock")
 
     try:
