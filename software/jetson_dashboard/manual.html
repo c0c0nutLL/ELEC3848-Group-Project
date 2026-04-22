@@ -224,9 +224,9 @@
                   <div id="power-value" class="power-num">96</div>
                   <div class="sub">PWM</div>
                 </div>
-                <input id="power-slider" class="slider" type="range" min="0" max="255" value="96">
+                <input id="power-slider" class="slider" type="range" min="40" max="100" value="96">
               </div>
-              <p class="hint">Changing the slider updates the next drive command. If a direction is being held, the new PWM is sent immediately.</p>
+              <p class="hint">Changing the slider updates the next drive command. The manual range is limited to 40 - 100 PWM, and if a direction is being held the new value is sent immediately.</p>
             </div>
           </section>
         </div>
@@ -266,7 +266,7 @@
               </div>
             </div>
           </div>
-          <p id="arm-feedback" class="hint" style="margin-top:14px">Adjust the lift and gripper sliders, then send the selected angle to Arduino.</p>
+          <p id="arm-feedback" class="hint" style="margin-top:14px">Adjust the lift and gripper sliders, then send the selected angle to Arduino. Keyboard: `I / K` moves lift by 5 deg, `J / L` moves gripper by 5 deg. Short press steps once; hold repeats at 5 deg per second.</p>
         </section>
       </div>
     </div>
@@ -295,6 +295,16 @@
       d: "RIGHT",
       D: "RIGHT"
     };
+    const armKeys = {
+      i: {joint: "LIFT", delta: 5},
+      I: {joint: "LIFT", delta: 5},
+      k: {joint: "LIFT", delta: -5},
+      K: {joint: "LIFT", delta: -5},
+      j: {joint: "GRIP", delta: -5},
+      J: {joint: "GRIP", delta: -5},
+      l: {joint: "GRIP", delta: 5},
+      L: {joint: "GRIP", delta: 5}
+    };
 
     const liveText = document.getElementById("live-text");
     const modeFeedbackTitle = document.getElementById("mode-feedback-title");
@@ -321,13 +331,18 @@
     let pressedDirection = null;
     let repeatTimer = null;
     let powerSyncTimer = null;
+    let armHoldStarter = null;
+    let activeArmKey = null;
+    let armRepeatTimer = null;
     let lastPacket = {};
-    let controlConfig = {api_path: "/api/control", default_power: 96, max_power: 255};
+    let controlConfig = {api_path: "/api/control", min_power: 40, default_power: 96, max_power: 100};
     let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 5};
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
     const LOCAL_PENDING_WINDOW_MS = 1500;
     const POWER_SYNC_DEBOUNCE_MS = 120;
+    const ARM_KEY_HOLD_DELAY_MS = 450;
+    const ARM_KEY_REPEAT_INTERVAL_MS = 1000;
     const pendingLocalState = {
       motorPwm: {value: null, ts: 0},
       controlDirection: {value: null, ts: 0},
@@ -461,6 +476,9 @@
 
       if (!manualEnabled && pressedDirection) {
         releaseDrive({skipCommand: true});
+      }
+      if (!manualEnabled && activeArmKey) {
+        clearArmRepeat();
       }
 
       if (hasProtocol) {
@@ -623,6 +641,18 @@
       }
     }
 
+    function clearArmRepeat() {
+      if (armRepeatTimer) {
+        clearInterval(armRepeatTimer);
+        armRepeatTimer = null;
+      }
+      if (armHoldStarter) {
+        clearTimeout(armHoldStarter);
+        armHoldStarter = null;
+      }
+      activeArmKey = null;
+    }
+
     function clearPowerSyncTimer() {
       if (powerSyncTimer) {
         clearTimeout(powerSyncTimer);
@@ -691,6 +721,27 @@
       void sendArm(joint, Number(slider.value), source);
     }
 
+    function applyArmStep(joint, delta, source) {
+      setJoint(joint, Number(sliderForJoint(joint).value) + delta);
+      sendJoint(joint, source);
+    }
+
+    function beginArmKeyControl(key) {
+      const binding = armKeys[key];
+      if (!binding || !manualControlsEnabled(lastPacket)) return;
+      if (activeArmKey === key) return;
+      clearArmRepeat();
+      activeArmKey = key;
+      applyArmStep(binding.joint, binding.delta, "manual-page-key");
+      armHoldStarter = setTimeout(() => {
+        if (activeArmKey !== key) return;
+        armRepeatTimer = setInterval(() => {
+          if (activeArmKey !== key) return;
+          applyArmStep(binding.joint, binding.delta, "manual-page-key-hold");
+        }, ARM_KEY_REPEAT_INTERVAL_MS);
+      }, ARM_KEY_HOLD_DELAY_MS);
+    }
+
     async function loadConfig() {
       try {
         const response = await fetch("/api/config");
@@ -699,8 +750,9 @@
 
         if (config.manual_control) {
           controlConfig = {...controlConfig, ...config.manual_control};
-          powerSlider.max = String(controlConfig.max_power || 255);
-          powerSlider.value = String(controlConfig.default_power || 96);
+          powerSlider.min = String(controlConfig.min_power || 40);
+          powerSlider.max = String(controlConfig.max_power || 100);
+          powerSlider.value = String(clamp(Number(controlConfig.default_power || 96), Number(powerSlider.min), Number(powerSlider.max)));
           updatePower();
         }
         if (config.arm_control) {
@@ -772,8 +824,7 @@
       button.addEventListener("click", () => {
         const delta = Number(button.dataset.delta || armConfig.step_deg);
         const joint = button.dataset.joint;
-        setJoint(joint, Number(sliderForJoint(joint).value) + delta);
-        sendJoint(joint, "manual-page-step");
+        applyArmStep(joint, delta, "manual-page-step");
       });
     });
 
@@ -787,12 +838,19 @@
       }
     });
 
-    window.addEventListener("blur", () => releaseDrive());
+    window.addEventListener("blur", () => {
+      releaseDrive();
+      clearArmRepeat();
+    });
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) releaseDrive();
+      if (document.hidden) {
+        releaseDrive();
+        clearArmRepeat();
+      }
     });
     window.addEventListener("beforeunload", () => {
       clearPowerSyncTimer();
+      clearArmRepeat();
       releaseDrive({source: "manual-page-unload", skipCommand: true});
       if (manualControlsEnabled(lastPacket)) {
         void fetch(controlConfig.api_path || "/api/control", {
@@ -804,6 +862,13 @@
       }
     });
     window.addEventListener("keydown", (event) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+      if (armKeys[event.key]) {
+        if (!manualControlsEnabled(lastPacket)) return;
+        event.preventDefault();
+        if (!event.repeat) beginArmKeyControl(event.key);
+        return;
+      }
       const direction = keys[event.key];
       if (!direction || event.repeat) {
         if (event.code === "Space") {
@@ -817,6 +882,11 @@
       if (pressedDirection !== direction) beginDrive(direction);
     });
     window.addEventListener("keyup", (event) => {
+      if (armKeys[event.key]) {
+        event.preventDefault();
+        if (activeArmKey === event.key) clearArmRepeat();
+        return;
+      }
       const direction = keys[event.key];
       if (!direction) return;
       event.preventDefault();

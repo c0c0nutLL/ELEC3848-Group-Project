@@ -141,7 +141,8 @@ TASK_SELECTION_STATE_FIELDS = [
 ]
 DEFAULT_TASK_SELECTION_TASK = "FULL_MISSION"
 DEFAULT_DRIVE_POWER = 96
-MAX_DRIVE_POWER = 255
+MIN_DRIVE_POWER = 40
+MAX_DRIVE_POWER = 100
 MIN_ARM_ANGLE_DEG = 0
 MAX_ARM_ANGLE_DEG = 180
 DEFAULT_ARM_LIFT_DEG = 110
@@ -309,7 +310,7 @@ def normalize_power(raw_power: Any) -> int:
         power = int(raw_power)
     except (TypeError, ValueError):
         raise ValueError("power must be an integer") from None
-    return clamp(power, 0, MAX_DRIVE_POWER)
+    return clamp(power, MIN_DRIVE_POWER, MAX_DRIVE_POWER)
 
 
 def normalize_arm_joint(raw_joint: Any) -> str:
@@ -1876,6 +1877,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "manual_control": {
                 "api_path": "/api/control",
                 "directions": sorted(ALLOWED_DRIVE_DIRECTIONS),
+                "min_power": MIN_DRIVE_POWER,
                 "default_power": DEFAULT_DRIVE_POWER,
                 "max_power": MAX_DRIVE_POWER,
                 "loopback_only": False,

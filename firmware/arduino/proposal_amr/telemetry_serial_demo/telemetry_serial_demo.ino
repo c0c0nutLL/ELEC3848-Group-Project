@@ -42,8 +42,8 @@ const uint8_t FRONT_ULTRASONIC_RIGHT_TRIG_PIN = 6;
 const uint8_t FRONT_ULTRASONIC_RIGHT_ECHO_PIN = 4;
 const uint8_t FRONT_ULTRASONIC_LEFT_TRIG_PIN = 10;
 const uint8_t FRONT_ULTRASONIC_LEFT_ECHO_PIN = 7;
-const uint8_t ARM_GRIP_SERVO_PIN = 44;
-const uint8_t ARM_LIFT_SERVO_PIN = 45;
+const uint8_t ARM_GRIP_SERVO_PIN = 45;
+const uint8_t ARM_LIFT_SERVO_PIN = 44;
 const uint8_t MPU6050_ADDR = 0x68;
 
 const unsigned long TELEMETRY_INTERVAL_MS = 200UL;
