@@ -84,20 +84,21 @@ const unsigned long OBSTACLE_STRAFE_MS = 850UL;
 const unsigned long OBSTACLE_PASS_MS = 1200UL;
 const unsigned long OBSTACLE_RETURN_MS = 850UL;
 
-const int DEFAULT_MOTOR_PWM = 96;
+const int DEFAULT_MOTOR_PWM = 45;
 const int MIN_MOTOR_PWM = 0;
 const int MAX_MOTOR_PWM = 255;
-const int AUTO_TRAVEL_PWM = 92;
-const int AUTO_APPROACH_PWM = 74;
-const int AUTO_DOCK_PWM = 60;
-const int AUTO_STRAFE_PWM = 66;
-const int AUTO_TURN_PWM = 96;
+const int AUTO_TRAVEL_PWM = 45;
+const int AUTO_APPROACH_PWM = 45;
+const int AUTO_DOCK_PWM = 45;
+const int AUTO_STRAFE_PWM = 45;
+const int AUTO_TURN_PWM = 45;
 
-const int DEFAULT_ARM_LIFT_DEG = 110;
-const int DEFAULT_ARM_GRIP_DEG = 90;
-const int ARM_LIFT_PICK_DEG = 72;
-const int ARM_GRIP_OPEN_DEG = 120;
-const int ARM_GRIP_CLOSE_DEG = 60;
+const int DEFAULT_ARM_LIFT_DEG = 30;
+const int DEFAULT_ARM_GRIP_DEG = 60;
+const int PICKUP_LIFT_GRAB_DEG = 0;
+const int PICKUP_GRIP_HOLD_DEG = 40;
+const int LOAD_LIFT_PLACE_DEG = 140;
+const int LOAD_GRIP_RELEASE_DEG = 90;
 const int CARGO_DOOR_OPEN_DEG = 108;
 const int CARGO_DOOR_CLOSED_DEG = 18;
 const int MIN_ARM_DEG = 0;
@@ -199,10 +200,10 @@ const int8_t DRIVE_SIGN[][MOTOR_COUNT] = {
 
 const DirectionTrim DEFAULT_DIRECTION_TRIM[] = {
   {{0, 0, 0, 0}},
-  {{8, 0, 8, 0}},
-  {{8, 0, 8, 0}},
-  {{0, 2, 0, 0}},
-  {{0, 2, 0, 0}},
+  {{5, 0, 5, 0}},
+  {{0, 0, 0, 0}},
+  {{0, 0, 0, 0}},
+  {{0, 0, 0, 0}},
   {{0, 0, 0, 0}},
   {{0, 0, 0, 0}}
 };
@@ -1731,41 +1732,19 @@ void runPickupSequenceStage() {
 
   switch (pickupSequenceStep) {
     case 0:
-      applyArmCommandInternal("LIFT", DEFAULT_ARM_LIFT_DEG);
+      applyArmCommandInternal("GRIP", PICKUP_GRIP_HOLD_DEG);
       armStepStartedMs = millis();
       pickupSequenceStep = 1;
       break;
     case 1:
       if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
-        applyArmCommandInternal("GRIP", ARM_GRIP_OPEN_DEG);
+        applyArmCommandInternal("LIFT", PICKUP_LIFT_GRAB_DEG);
         armStepStartedMs = millis();
         pickupSequenceStep = 2;
       }
       break;
-    case 2:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
-        applyArmCommandInternal("LIFT", ARM_LIFT_PICK_DEG);
-        armStepStartedMs = millis();
-        pickupSequenceStep = 3;
-      }
-      break;
-    case 3:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
-        applyArmCommandInternal("GRIP", ARM_GRIP_CLOSE_DEG);
-        armStepStartedMs = millis();
-        pickupSequenceStep = 4;
-      }
-      break;
-    case 4:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
-        applyArmCommandInternal("LIFT", DEFAULT_ARM_LIFT_DEG);
-        armStepStartedMs = millis();
-        pickupSequenceStep = 5;
-      }
-      break;
     default:
       if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
-        applyArmCommandInternal("GRIP", DEFAULT_ARM_GRIP_DEG);
         enterAutoStage(STAGE_OPEN_DOOR_FOR_LOAD);
       }
       break;
@@ -1784,8 +1763,33 @@ void runOpenDoorForLoadStage() {
 
 void runLoadCargoStage() {
   setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
-  if (millis() - autoStageStartedMs >= LOAD_SETTLE_MS) {
-    enterAutoStage(STAGE_CLOSE_DOOR_AFTER_LOAD);
+
+  switch (pickupSequenceStep) {
+    case 0:
+      applyArmCommandInternal("GRIP", LOAD_GRIP_RELEASE_DEG);
+      armStepStartedMs = millis();
+      pickupSequenceStep = 1;
+      break;
+    case 1:
+      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+        applyArmCommandInternal("LIFT", LOAD_LIFT_PLACE_DEG);
+        armStepStartedMs = millis();
+        pickupSequenceStep = 2;
+      }
+      break;
+    case 2:
+      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+        applyArmCommandInternal("LIFT", DEFAULT_ARM_LIFT_DEG);
+        armStepStartedMs = millis();
+        pickupSequenceStep = 3;
+      }
+      break;
+    default:
+      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+        applyArmCommandInternal("GRIP", DEFAULT_ARM_GRIP_DEG);
+        enterAutoStage(STAGE_CLOSE_DOOR_AFTER_LOAD);
+      }
+      break;
   }
 }
 
