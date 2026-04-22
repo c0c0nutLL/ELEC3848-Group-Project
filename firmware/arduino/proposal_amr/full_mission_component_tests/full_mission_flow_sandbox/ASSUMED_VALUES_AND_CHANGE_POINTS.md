@@ -21,6 +21,8 @@ Only the sandbox sketch is tracked here. If you later change the delivery auto-c
 - Line 46: `RFID_RST_PIN = 49` -> final RFID reset pin.
 - Line 47: `LOCAL_START_BUTTON_PIN = 33` -> optional local full-mission start button pin for bench testing.
 - Line 48: `LOCAL_CLOSE_BUTTON_PIN = 32` -> optional local close-door button pin for bench testing.
+- Line 49: `RED_LED_PIN = 41` -> red task-status LED for obstacle-active indication.
+- Line 50: `GREEN_LED_PIN = 47` -> green task-status LED for delivery-side unlock-wait indication.
 
 ## RFID / Mission Identity
 

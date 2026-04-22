@@ -46,6 +46,8 @@ const uint8_t RFID_SS_PIN = 53;           // ASSUMED
 const uint8_t RFID_RST_PIN = 49;          // ASSUMED
 const uint8_t LOCAL_START_BUTTON_PIN = 33;  // ASSUMED
 const uint8_t LOCAL_CLOSE_BUTTON_PIN = 32;  // ASSUMED
+const uint8_t RED_LED_PIN = 41;
+const uint8_t GREEN_LED_PIN = 47;
 
 const char PICKUP_RFID_TAG[] = "PICKUP_TAG_01";      // ASSUMED
 const char DELIVERY_RFID_TAG[] = "DELIVERY_TAG_01";  // ASSUMED
@@ -119,6 +121,11 @@ enum ObstacleKind {
   OBSTACLE_OBJECT
 };
 
+struct TaskLedState {
+  bool redOn;
+  bool greenOn;
+};
+
 Servo gripServo;
 Servo liftServo;
 Servo doorServo;
@@ -146,6 +153,7 @@ unsigned long lastStatusMs = 0;
 
 float simulatedFrontDistanceCm = DEFAULT_SIM_FRONT_CM;
 char lastSeenRfid[24] = "";
+TaskLedState appliedLedState = {false, false};
 
 const char *taskName(MissionTask task) {
   switch (task) {
@@ -246,6 +254,15 @@ void setupInputPins() {
   pinMode(LOCAL_CLOSE_BUTTON_PIN, INPUT_PULLUP);
 }
 
+void setupTaskStatusLeds() {
+  pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, LOW);
+  appliedLedState.redOn = false;
+  appliedLedState.greenOn = false;
+}
+
 void stopCar() {
   MOTORA_STOP();
   MOTORB_STOP();
@@ -301,7 +318,42 @@ void closeDoor() {
   deliveryDoorOpenedMs = 0;
 }
 
+bool isObstacleLedActive() {
+  return obstacleRoutineActive;
+  // 红灯覆盖整个避障子状态机，而不是只在检测到障碍的瞬间闪一下。
+  return obstacleRoutineActive;
+}
+
+bool isUnlockWaitLedActive() {
+  return missionActive && currentStage == STAGE_WAIT_USER_UNLOCK;
+  // 绿灯只在“已到达并等待 Jetson 侧扫码 / 密码开门”的阶段常亮。
+  return missionActive && currentStage == STAGE_WAIT_USER_UNLOCK;
+}
+
+TaskLedState desiredTaskLedState() {
+  TaskLedState desired = {false, false};
+  desired.redOn = isObstacleLedActive();
+  desired.greenOn = isUnlockWaitLedActive();
+  return desired;
+}
+
+void applyTaskLedState(const TaskLedState &desired) {
+  if (desired.redOn != appliedLedState.redOn) {
+    digitalWrite(RED_LED_PIN, desired.redOn ? HIGH : LOW);
+  }
+  if (desired.greenOn != appliedLedState.greenOn) {
+    digitalWrite(GREEN_LED_PIN, desired.greenOn ? HIGH : LOW);
+  }
+  appliedLedState = desired;
+}
+
+void updateTaskStatusLeds() {
+  applyTaskLedState(desiredTaskLedState());
+}
+
 void emitStatus() {
+  TaskLedState ledState = desiredTaskLedState();
+  int obstacleStepValue = obstacleRoutineActive ? static_cast<int>(obstacleRoutineStep) : -1;
   Serial.print(F("{\"task\":\""));
   Serial.print(taskName(currentTask));
   Serial.print(F("\",\"stage\":\""));
@@ -316,7 +368,15 @@ void emitStatus() {
   Serial.print(simulatedFrontDistanceCm, 1);
   Serial.print(F(",\"obstacle\":\""));
   Serial.print(obstacleName(obstacleKind));
-  Serial.print(F("\",\"auto_closed\":"));
+  Serial.print(F("\",\"obstacle_routine_active\":"));
+  Serial.print(obstacleRoutineActive ? F("true") : F("false"));
+  Serial.print(F(",\"obstacle_routine_step\":"));
+  Serial.print(obstacleStepValue);
+  Serial.print(F(",\"red_led\":"));
+  Serial.print(ledState.redOn ? F("true") : F("false"));
+  Serial.print(F(",\"green_led\":"));
+  Serial.print(ledState.greenOn ? F("true") : F("false"));
+  Serial.print(F(",\"auto_closed\":"));
   Serial.print(doorAutoClosed ? F("true") : F("false"));
   Serial.println(F("}"));
 }
@@ -519,6 +579,7 @@ void printHelp() {
   Serial.println(F("  OBSTACLE CLEAR"));
   Serial.println(F("Distance override:"));
   Serial.println(F("  DIST <cm>"));
+  Serial.println(F("Task LEDs: RED=obstacle routine, GREEN=WAIT_USER_UNLOCK"));
   Serial.println(F("This sketch is a structure sandbox. RFID, door-servo pin, and motion timing all still use assumed values."));
 }
 
@@ -848,6 +909,7 @@ void setup() {
   Serial.begin(115200);
   setupMotorPins();
   setupInputPins();
+  setupTaskStatusLeds();
   stopCar();
 
   gripServo.attach(ARM_GRIP_SERVO_PIN);
@@ -856,6 +918,7 @@ void setup() {
 
   applyArmPose(ARM_HOME_LIFT_DEG, ARM_HOME_GRIP_DEG);
   closeDoor();
+  updateTaskStatusLeds();
   printHelp();
   emitStatus();
 }
@@ -869,6 +932,7 @@ void loop() {
   }
 
   updateMissionStateMachine();
+  updateTaskStatusLeds();
 
   if (millis() - lastStatusMs >= STATUS_INTERVAL_MS) {
     lastStatusMs = millis();

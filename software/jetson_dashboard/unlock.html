@@ -79,6 +79,29 @@
       background: #fffefa;
     }
 
+    .password-tools {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .password-tools label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .password-tools input {
+      width: auto;
+      margin: 0;
+    }
+
     button {
       width: 100%;
       margin-top: 14px;
@@ -143,6 +166,12 @@
 
     <label for="password">Password</label>
     <input id="password" type="password" placeholder="Enter fixed password" autocomplete="current-password">
+    <div class="password-tools">
+      <label for="show-password">
+        <input id="show-password" type="checkbox">
+        <span>Show password</span>
+      </label>
+    </div>
     <button id="submit-btn" type="button">Unlock</button>
 
     <div id="result" class="result">Waiting for password input.</div>
@@ -160,6 +189,7 @@
     const doorStateNode = document.getElementById("door-state");
     const autoCloseNode = document.getElementById("auto-close");
     const passwordInput = document.getElementById("password");
+    const showPasswordInput = document.getElementById("show-password");
     const submitBtn = document.getElementById("submit-btn");
     const resultNode = document.getElementById("result");
     const uiState = {
@@ -187,9 +217,11 @@
       doorStateNode.textContent = isOpen ? "OPEN" : "CLOSED";
       submitBtn.textContent = isOpen ? "Close Door" : "Unlock";
       passwordInput.disabled = isOpen;
+      showPasswordInput.disabled = isOpen;
       passwordInput.placeholder = isOpen
         ? "Door is open; password is not needed to close"
         : "Enter fixed password";
+      passwordInput.type = showPasswordInput.checked && !isOpen ? "text" : "password";
 
       if (isOpen) {
         const deadlineMs = uiState.doorOpenedAtMs + uiState.doorAutoCloseMs;
@@ -299,6 +331,7 @@
     }
 
     submitBtn.addEventListener("click", handleSubmit);
+    showPasswordInput.addEventListener("change", renderDoorState);
     passwordInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !uiState.doorOpen) {
         handleSubmit();

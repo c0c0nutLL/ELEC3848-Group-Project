@@ -32,3 +32,14 @@ Use [final_integrated_firmware](F:\李仁杰\香港大学\2025-2026\ELEC3848\Gro
   - dedicated arm-side pickup sequence bench test
 - [full_mission_flow_sandbox](F:\鏉庝粊鏉癨棣欐腐澶у\2025-2026\ELEC3848\Group project\firmware\arduino\proposal_amr\full_mission_component_tests\full_mission_flow_sandbox)
   - end-to-end sandbox for pickup + delivery flow, door-close timing, and obstacle insertions
+
+## Current LED Hook
+
+Task-status LED logic is currently attached to `full_mission_flow_sandbox`.
+
+Reason:
+
+- it is the closest Arduino-side sketch to the planned full pickup + delivery mission
+- it already contains both:
+  - obstacle-interrupt behavior
+  - delivery-side `WAIT_USER_UNLOCK`
