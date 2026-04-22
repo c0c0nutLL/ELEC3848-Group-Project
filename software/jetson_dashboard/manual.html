@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMR Manual And Arm Control</title>
+  <style>
+    :root{
+      --bg:#f3f1ea;
+      --panel:#fffdf8;
+      --line:#d7d1c4;
+      --text:#1d1c19;
+      --muted:#6d675c;
+      --accent:#206a5d;
+      --warn:#c0542f;
+      --shadow:0 10px 30px rgba(29,28,25,.05)
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+      background:
+        radial-gradient(circle at top left,#fff5d9 0,transparent 28%),
+        radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),
+        var(--bg);
+      color:var(--text)
+    }
+    button,input{font:inherit}
+    a{text-decoration:none;color:inherit}
+    button:disabled,input:disabled{opacity:.55;cursor:not-allowed}
+    .page{max-width:1320px;margin:0 auto;padding:24px}
+    .hero,.hero-links,.panel-head,.mode-actions,.arm-head,.power-meta{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center
+    }
+    .hero{margin-bottom:16px}
+    .hero-links{flex-wrap:wrap;justify-content:flex-end}
+    .hero h1,.panel-head h2,.module h3{margin:0}
+    .sub,.hint{margin:6px 0 0;color:var(--muted);line-height:1.5}
+    .pill,.mini,.btn,.module,.panel,.card,.drive,.arm-card,.power-box,.task-note,.step,.apply{
+      border:1px solid var(--line);
+      background:var(--panel);
+      box-shadow:var(--shadow)
+    }
+    .pill,.mini,.btn,.drive,.step,.apply{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px
+    }
+    .pill,.mini,.btn,.step,.apply{padding:9px 13px}
+    .btn{font-weight:700;cursor:pointer}
+    .btn.primary,.apply{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.3);color:var(--accent)}
+    .btn.warn{background:#fff3ed;border-color:rgba(192,84,47,.24);color:var(--warn)}
+    .page-grid{display:grid;gap:16px}
+    .panel{
+      border-radius:18px;
+      padding:16px
+    }
+    .module{
+      border-radius:16px;
+      padding:16px;
+      background:rgba(255,255,255,.6)
+    }
+    .label{
+      font-size:12px;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      margin-bottom:8px
+    }
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
+    .card{
+      border-radius:14px;
+      padding:14px;
+      background:rgba(255,255,255,.58)
+    }
+    .value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}
+    .small{font-size:17px}
+    .task-note{
+      min-height:70px;
+      padding:14px;
+      border-radius:14px;
+      border-style:dashed;
+      background:rgba(255,255,255,.78)
+    }
+    .task-note strong{display:block;margin-bottom:6px}
+    .layout{display:grid;grid-template-columns:minmax(300px,.9fr) minmax(420px,1.1fr);gap:16px}
+    .stack{display:grid;gap:16px}
+    .pad-wrap,.power-wrap{display:grid;grid-template-columns:minmax(240px,1fr) minmax(220px,280px);gap:16px;align-items:center}
+    .pad{display:grid;grid-template-columns:repeat(3,minmax(72px,1fr));grid-template-areas:". up ." "left stop right" ". down .";gap:10px;min-height:220px}
+    .drive{min-height:70px;border-radius:18px;cursor:pointer;font-weight:700}
+    .drive.up{grid-area:up}
+    .drive.left{grid-area:left}
+    .drive.stop{grid-area:stop;background:#fff3ed;color:var(--warn)}
+    .drive.right{grid-area:right}
+    .drive.down{grid-area:down}
+    .drive.active{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.45)}
+    .stop-wide{
+      width:100%;
+      margin-top:12px;
+      padding:11px 14px;
+      border-radius:999px;
+      border:1px solid rgba(192,84,47,.24);
+      background:#fff3ed;
+      color:var(--warn);
+      font-weight:700;
+      box-shadow:var(--shadow);
+      cursor:pointer
+    }
+    .power-box,.arm-card{
+      border-radius:16px;
+      padding:16px;
+      background:#f8faf7
+    }
+    .power-num,.arm-num{font-size:30px;font-weight:700}
+    .slider{width:100%;accent-color:var(--accent)}
+    .arm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .arm-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+    @media (max-width:1100px){
+      .layout,.pad-wrap,.power-wrap,.arm-grid{grid-template-columns:1fr}
+    }
+    @media (max-width:820px){
+      .hero,.panel-head,.hero-links,.mode-actions,.arm-head,.power-meta{flex-direction:column;align-items:flex-start}
+      .page{padding:18px}
+      .cards{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <div class="label">Manual Workspace</div>
+        <h1>AMR Manual And Arm Control</h1>
+        <p class="sub">This page combines chassis manual control and two-servo arm control. It keeps the current Jetson <-> Arduino interaction path and still respects manual-override gating when the interrupt/resume demo is active.</p>
+      </div>
+      <div class="hero-links">
+        <a class="mini" href="/">Home</a>
+        <a class="mini" href="/telemetry">Telemetry</a>
+        <a class="mini" href="/tasks">Tasks</a>
+        <a class="mini" href="/status">Status</a>
+        <a class="mini" href="/debug">Debug</a>
+        <a class="mini" href="/unlock">Unlock</a>
+        <span class="pill" id="live-text">Waiting for data</span>
+      </div>
+    </div>
+
+    <div class="page-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="label">Live State</div>
+            <h2>Manual Control Status</h2>
+            <p class="sub">Use these cards to confirm mode gating, saved-stage state, and current actuator outputs before sending commands.</p>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="card"><div class="label">Current Mode</div><div id="current_mode" class="value">--</div></div>
+          <div class="card"><div class="label">Auto Stage</div><div id="current_auto_stage" class="value small">--</div></div>
+          <div class="card"><div class="label">Saved Stage</div><div id="saved_auto_stage" class="value small">--</div></div>
+          <div class="card"><div class="label">Resume Pending</div><div id="resume_pending" class="value">--</div></div>
+          <div class="card"><div class="label">Task Active</div><div id="task_active" class="value">--</div></div>
+          <div class="card"><div class="label">Drive Direction</div><div id="control_direction" class="value">--</div></div>
+          <div class="card"><div class="label">Motor Power</div><div id="motor_pwm" class="value">--</div></div>
+          <div class="card"><div class="label">Arm Status</div><div id="arm_status" class="value">--</div></div>
+          <div class="card"><div class="label">Arm Lift</div><div id="arm_lift_deg" class="value">--</div></div>
+          <div class="card"><div class="label">Arm Gripper</div><div id="arm_grip_deg" class="value">--</div></div>
+          <div class="card"><div class="label">Bridge</div><div id="bridge_status" class="value">--</div></div>
+          <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
+        </div>
+      </section>
+
+      <div class="layout">
+        <div class="stack">
+          <section class="panel">
+            <div class="label">Mode Control</div>
+            <h2>Manual Override</h2>
+            <div class="mode-actions" style="margin-top:14px">
+              <button id="take-manual" class="btn" type="button">Take Manual Control</button>
+              <button id="resume-task" class="btn primary" type="button">Return To Auto / Resume</button>
+              <button id="abort-task" class="btn warn" type="button">Cancel Resume / Abort</button>
+            </div>
+            <div class="task-note" style="margin-top:14px">
+              <strong id="mode-feedback-title">Mode Feedback</strong>
+              <div id="mode-feedback" class="sub">Waiting for interrupt/resume telemetry.</div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="label">Vehicle Direction</div>
+            <h2>Drive Pad</h2>
+            <div class="pad-wrap" style="margin-top:14px">
+              <div>
+                <div class="pad">
+                  <button class="drive up" type="button" data-direction="FORWARD">Forward</button>
+                  <button class="drive left" type="button" data-direction="LEFT">Left</button>
+                  <button class="drive stop" type="button" data-direction="STOP">Stop</button>
+                  <button class="drive right" type="button" data-direction="RIGHT">Right</button>
+                  <button class="drive down" type="button" data-direction="BACKWARD">Backward</button>
+                </div>
+                <button id="emergency-stop" class="stop-wide" type="button">Emergency Stop</button>
+              </div>
+              <div>
+                <p id="control-feedback" class="hint">Hold a direction button to move. Release to stop.</p>
+                <p class="hint">Keyboard: `W A S D` or arrow keys. Space sends `STOP` immediately while manual control is enabled.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="label">Motor Power</div>
+            <h2>PWM Output</h2>
+            <div class="power-wrap" style="margin-top:14px">
+              <div class="power-box">
+                <div class="power-meta">
+                  <div id="power-value" class="power-num">96</div>
+                  <div class="sub">PWM</div>
+                </div>
+                <input id="power-slider" class="slider" type="range" min="0" max="255" value="96">
+              </div>
+              <p class="hint">Changing the slider updates the next drive command. If a direction is being held, the new PWM is sent immediately.</p>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="label">Mechanical Arm</div>
+          <h2>Two-Servo Arm Control</h2>
+          <div class="arm-grid" style="margin-top:14px">
+            <div class="arm-card">
+              <div class="arm-head">
+                <div>
+                  <div class="label">Lift Servo</div>
+                  <div id="lift-value" class="arm-num">110 deg</div>
+                </div>
+                <div id="lift-range" class="sub">0 - 180 deg</div>
+              </div>
+              <input id="lift-slider" class="slider" type="range" min="0" max="180" value="110">
+              <div class="arm-actions">
+                <button class="step" type="button" data-joint="LIFT" data-delta="-5">Lift -5</button>
+                <button id="send-lift" class="apply" type="button">Send Lift</button>
+                <button class="step" type="button" data-joint="LIFT" data-delta="5">Lift +5</button>
+              </div>
+            </div>
+            <div class="arm-card">
+              <div class="arm-head">
+                <div>
+                  <div class="label">Gripper Servo</div>
+                  <div id="grip-value" class="arm-num">90 deg</div>
+                </div>
+                <div id="grip-range" class="sub">0 - 180 deg</div>
+              </div>
+              <input id="grip-slider" class="slider" type="range" min="0" max="180" value="90">
+              <div class="arm-actions">
+                <button class="step" type="button" data-joint="GRIP" data-delta="-5">Grip -5</button>
+                <button id="send-grip" class="apply" type="button">Send Grip</button>
+                <button class="step" type="button" data-joint="GRIP" data-delta="5">Grip +5</button>
+              </div>
+            </div>
+          </div>
+          <p id="arm-feedback" class="hint" style="margin-top:14px">Adjust the lift and gripper sliders, then send the selected angle to Arduino.</p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fields = [
+      "current_mode","current_auto_stage","saved_auto_stage","resume_pending","task_active",
+      "control_direction","motor_pwm","arm_status","arm_lift_deg","arm_grip_deg","bridge_status","fault"
+    ];
+    const keys = {
+      ArrowUp: "FORWARD",
+      ArrowDown: "BACKWARD",
+      ArrowLeft: "LEFT",
+      ArrowRight: "RIGHT",
+      w: "FORWARD",
+      W: "FORWARD",
+      s: "BACKWARD",
+      S: "BACKWARD",
+      a: "LEFT",
+      A: "LEFT",
+      d: "RIGHT",
+      D: "RIGHT"
+    };
+
+    const liveText = document.getElementById("live-text");
+    const modeFeedbackTitle = document.getElementById("mode-feedback-title");
+    const modeFeedback = document.getElementById("mode-feedback");
+    const takeManualButton = document.getElementById("take-manual");
+    const resumeTaskButton = document.getElementById("resume-task");
+    const abortTaskButton = document.getElementById("abort-task");
+    const powerSlider = document.getElementById("power-slider");
+    const powerValue = document.getElementById("power-value");
+    const controlFeedback = document.getElementById("control-feedback");
+    const driveButtons = [...document.querySelectorAll(".drive")];
+    const emergencyStop = document.getElementById("emergency-stop");
+    const liftSlider = document.getElementById("lift-slider");
+    const gripSlider = document.getElementById("grip-slider");
+    const liftValue = document.getElementById("lift-value");
+    const gripValue = document.getElementById("grip-value");
+    const liftRange = document.getElementById("lift-range");
+    const gripRange = document.getElementById("grip-range");
+    const armFeedback = document.getElementById("arm-feedback");
+    const stepButtons = [...document.querySelectorAll(".step")];
+    const sendLiftButton = document.getElementById("send-lift");
+    const sendGripButton = document.getElementById("send-grip");
+
+    let pressedDirection = null;
+    let repeatTimer = null;
+    let lastPacket = {};
+    let controlConfig = {api_path: "/api/control", default_power: 96, max_power: 255};
+    let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 5};
+    let modeConfig = {api_path: "/api/mode"};
+    let taskConfig = {api_path: "/api/task"};
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function fmt(value, key) {
+      if (value === undefined || value === null || value === "") return "--";
+      if (typeof value === "number" && !Number.isFinite(value)) return "--";
+      if (typeof value === "number" && (key === "arm_lift_deg" || key === "arm_grip_deg")) return Math.round(value) + " deg";
+      if (typeof value === "number" && key === "motor_pwm") return value + " / " + powerSlider.max;
+      if (typeof value === "boolean") return value ? "true" : "false";
+      return String(value);
+    }
+
+    function setLive(text) {
+      liveText.textContent = text;
+    }
+
+    function updatePower() {
+      powerValue.textContent = String(powerSlider.value);
+    }
+
+    function updateArmLabels() {
+      liftValue.textContent = liftSlider.value + " deg";
+      gripValue.textContent = gripSlider.value + " deg";
+    }
+
+    function hasInterruptResume(packet) {
+      return Boolean(packet && packet.mode_protocol_version);
+    }
+
+    function manualControlsEnabled(packet) {
+      if (!hasInterruptResume(packet)) return true;
+      return String(packet.current_mode || "") === "MANUAL_OVERRIDE";
+    }
+
+    function faultBlocksResume(packet) {
+      return Boolean(packet && (packet.fault_latched || packet.current_mode === "FAULT"));
+    }
+
+    function syncDriveButtons(direction) {
+      driveButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.direction === direction && direction !== "STOP");
+      });
+    }
+
+    function syncManualInterlock(packet) {
+      const manualEnabled = manualControlsEnabled(packet);
+      const hasProtocol = hasInterruptResume(packet);
+
+      driveButtons.forEach((button) => {
+        button.disabled = !manualEnabled;
+      });
+      emergencyStop.disabled = !manualEnabled;
+      powerSlider.disabled = !manualEnabled;
+      liftSlider.disabled = !manualEnabled;
+      gripSlider.disabled = !manualEnabled;
+      sendLiftButton.disabled = !manualEnabled;
+      sendGripButton.disabled = !manualEnabled;
+      stepButtons.forEach((button) => {
+        button.disabled = !manualEnabled;
+      });
+
+      if (!manualEnabled && pressedDirection) {
+        releaseDrive({skipCommand: true});
+      }
+
+      if (hasProtocol) {
+        controlFeedback.textContent = manualEnabled
+          ? "Manual override active. Hold a direction button to move. Release to stop."
+          : "Take manual control first. Direct drive is blocked while AUTO owns the chassis.";
+        armFeedback.textContent = manualEnabled
+          ? "Manual override active. Arm commands will be sent to Arduino immediately."
+          : "Take manual control first. Direct arm commands are blocked while AUTO owns the arm.";
+      }
+    }
+
+    function syncModeButtons(packet) {
+      const protocolReady = hasInterruptResume(packet);
+      const mode = String(packet.current_mode || "");
+      const resumePending = Boolean(packet.resume_pending);
+      const resumeBlocked = faultBlocksResume(packet);
+      const savedStage = String(packet.saved_auto_stage || "");
+      const taskActive = Boolean(packet.task_active);
+      const abortAvailable = taskActive || resumePending || savedStage;
+
+      takeManualButton.disabled = !protocolReady || mode === "MANUAL_OVERRIDE";
+      resumeTaskButton.disabled = !protocolReady || mode !== "MANUAL_OVERRIDE" || !resumePending || resumeBlocked;
+      abortTaskButton.disabled = !protocolReady || !abortAvailable;
+
+      if (!protocolReady) {
+        modeFeedbackTitle.textContent = "Mode Feedback";
+        modeFeedback.textContent = "Interrupt/resume protocol unavailable. Flash interrupt_resume_demo.ino to enable task-level manual takeover.";
+        return;
+      }
+
+      if (mode === "MANUAL_OVERRIDE") {
+        modeFeedbackTitle.textContent = "Manual Override";
+        if (resumeBlocked) {
+          modeFeedback.textContent = "Manual control is active, but a latched fault blocks resume. Abort or restart the task after the issue is cleared.";
+        } else if (resumePending) {
+          modeFeedback.textContent = `Manual control is active. Resume checkpoint: ${packet.saved_auto_stage || "--"}.`;
+        } else {
+          modeFeedback.textContent = "Manual control is active. There is no saved auto stage to resume.";
+        }
+        return;
+      }
+
+      if (mode === "FAULT") {
+        modeFeedbackTitle.textContent = "Fault";
+        modeFeedback.textContent = "Auto task is faulted. Resume is blocked until the task is aborted or restarted.";
+        return;
+      }
+
+      modeFeedbackTitle.textContent = "Auto State";
+      if (taskActive) {
+        modeFeedback.textContent = `AUTO owns the robot. Current stage: ${packet.current_auto_stage || "--"}.`;
+      } else {
+        modeFeedback.textContent = "No active auto task. You can take manual control directly.";
+      }
+    }
+
+    function render(packet) {
+      lastPacket = packet || {};
+      fields.forEach((key) => {
+        const node = document.getElementById(key);
+        if (node) node.textContent = fmt(packet[key], key);
+      });
+      if (typeof packet.motor_pwm === "number" && !pressedDirection) {
+        powerSlider.value = String(packet.motor_pwm);
+        updatePower();
+      }
+      if (typeof packet.control_direction === "string" && !pressedDirection) {
+        syncDriveButtons(packet.control_direction.toUpperCase());
+      }
+      if (typeof packet.arm_lift_deg === "number" && document.activeElement !== liftSlider) {
+        liftSlider.value = String(packet.arm_lift_deg);
+      }
+      if (typeof packet.arm_grip_deg === "number" && document.activeElement !== gripSlider) {
+        gripSlider.value = String(packet.arm_grip_deg);
+      }
+      updateArmLabels();
+      setLive("Live update: " + new Date().toLocaleTimeString());
+      syncManualInterlock(packet);
+      syncModeButtons(packet);
+    }
+
+    async function postJson(path, payload, feedbackNode) {
+      try {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.ok === false) {
+          throw new Error(result.message || `HTTP ${response.status}`);
+        }
+        if (feedbackNode) feedbackNode.textContent = result.message || "request sent";
+        return result;
+      } catch (error) {
+        if (feedbackNode) {
+          feedbackNode.textContent = `${payload.action || payload.direction || payload.joint} failed: ${error.message}`;
+        }
+        throw error;
+      }
+    }
+
+    async function sendControl(direction, options = {}) {
+      if (!manualControlsEnabled(lastPacket)) {
+        controlFeedback.textContent = "Take manual control first.";
+        return;
+      }
+      const payload = {direction, power: Number(powerSlider.value), source: options.source || "manual-page"};
+      await postJson(controlConfig.api_path || "/api/control", payload, controlFeedback).catch(() => {});
+    }
+
+    async function sendArm(joint, angle, source) {
+      if (!manualControlsEnabled(lastPacket)) {
+        armFeedback.textContent = "Take manual control first.";
+        return;
+      }
+      await postJson(
+        armConfig.api_path || "/api/arm",
+        {joint, angle, source: source || "manual-page"},
+        armFeedback
+      ).catch(() => {});
+    }
+
+    async function sendModeAction(action) {
+      await postJson(modeConfig.api_path || "/api/mode", {action, source: "manual-page"}, modeFeedback).catch(() => {});
+    }
+
+    async function sendTaskAction(action) {
+      await postJson(taskConfig.api_path || "/api/task", {action, source: "manual-page"}, modeFeedback).catch(() => {});
+    }
+
+    function clearRepeat() {
+      if (repeatTimer) {
+        clearInterval(repeatTimer);
+        repeatTimer = null;
+      }
+    }
+
+    function releaseDrive(options = {}) {
+      if (!pressedDirection && options.skipCommand) return;
+      pressedDirection = null;
+      clearRepeat();
+      syncDriveButtons("STOP");
+      if (!options.skipCommand) {
+        void sendControl("STOP", {source: options.source || "manual-page"});
+      }
+    }
+
+    function beginDrive(direction) {
+      if (!manualControlsEnabled(lastPacket)) return;
+      if (!direction || direction === "STOP") {
+        releaseDrive();
+        return;
+      }
+      pressedDirection = direction;
+      syncDriveButtons(direction);
+      void sendControl(direction);
+      clearRepeat();
+      repeatTimer = setInterval(() => {
+        if (pressedDirection === direction) void sendControl(direction, {source: "manual-page-hold"});
+      }, 250);
+    }
+
+    function sliderForJoint(joint) {
+      return joint === "LIFT" ? liftSlider : gripSlider;
+    }
+
+    function setJoint(joint, nextValue) {
+      const slider = sliderForJoint(joint);
+      slider.value = String(clamp(nextValue, Number(slider.min), Number(slider.max)));
+      updateArmLabels();
+    }
+
+    function sendJoint(joint, source) {
+      const slider = sliderForJoint(joint);
+      void sendArm(joint, Number(slider.value), source);
+    }
+
+    async function loadConfig() {
+      try {
+        const response = await fetch("/api/config");
+        if (!response.ok) return;
+        const config = await response.json();
+
+        if (config.manual_control) {
+          controlConfig = {...controlConfig, ...config.manual_control};
+          powerSlider.max = String(controlConfig.max_power || 255);
+          powerSlider.value = String(controlConfig.default_power || 96);
+          updatePower();
+        }
+        if (config.arm_control) {
+          armConfig = {...armConfig, ...config.arm_control};
+          [liftSlider, gripSlider].forEach((slider) => {
+            slider.min = String(armConfig.min_angle_deg);
+            slider.max = String(armConfig.max_angle_deg);
+          });
+          liftSlider.value = String(armConfig.default_lift_deg);
+          gripSlider.value = String(armConfig.default_grip_deg);
+          liftRange.textContent = `${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;
+          gripRange.textContent = `${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;
+          updateArmLabels();
+        }
+        if (config.mode_control) modeConfig = {...modeConfig, ...config.mode_control};
+        if (config.task_control) taskConfig = {...taskConfig, ...config.task_control};
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function loadInitial() {
+      try {
+        const response = await fetch("/api/state");
+        if (!response.ok) return;
+        const packet = await response.json();
+        if (Object.keys(packet).length > 0) render(packet);
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function connectEvents() {
+      const source = new EventSource("/events");
+      source.onmessage = (event) => render(JSON.parse(event.data));
+      source.onerror = () => setLive("Disconnected, retrying...");
+    }
+
+    driveButtons.forEach((button) => {
+      const direction = button.dataset.direction;
+      if (!direction) return;
+      if (direction === "STOP") {
+        button.addEventListener("click", () => releaseDrive());
+        return;
+      }
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        beginDrive(direction);
+        if (button.setPointerCapture) button.setPointerCapture(event.pointerId);
+      });
+      button.addEventListener("pointerup", () => releaseDrive());
+      button.addEventListener("pointercancel", () => releaseDrive());
+      button.addEventListener("pointerleave", () => releaseDrive({skipCommand: true}));
+    });
+
+    emergencyStop.addEventListener("click", () => releaseDrive());
+    powerSlider.addEventListener("input", () => {
+      updatePower();
+      if (pressedDirection) void sendControl(pressedDirection, {source: "manual-page-slider"});
+    });
+    liftSlider.addEventListener("input", updateArmLabels);
+    gripSlider.addEventListener("input", updateArmLabels);
+    liftSlider.addEventListener("change", () => sendJoint("LIFT", "manual-page-slider"));
+    gripSlider.addEventListener("change", () => sendJoint("GRIP", "manual-page-slider"));
+    sendLiftButton.addEventListener("click", () => sendJoint("LIFT", "manual-page-button"));
+    sendGripButton.addEventListener("click", () => sendJoint("GRIP", "manual-page-button"));
+    stepButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const delta = Number(button.dataset.delta || armConfig.step_deg);
+        const joint = button.dataset.joint;
+        setJoint(joint, Number(sliderForJoint(joint).value) + delta);
+        sendJoint(joint, "manual-page-step");
+      });
+    });
+
+    takeManualButton.addEventListener("click", () => sendModeAction("TAKE_MANUAL"));
+    resumeTaskButton.addEventListener("click", () => sendModeAction("RESUME_AUTO"));
+    abortTaskButton.addEventListener("click", () => {
+      if (String(lastPacket.current_mode || "") === "MANUAL_OVERRIDE") {
+        void sendModeAction("ABORT_TASK");
+      } else {
+        void sendTaskAction("ABORT");
+      }
+    });
+
+    window.addEventListener("blur", () => releaseDrive());
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) releaseDrive();
+    });
+    window.addEventListener("beforeunload", () => {
+      releaseDrive({source: "manual-page-unload", skipCommand: true});
+      if (manualControlsEnabled(lastPacket)) {
+        void fetch(controlConfig.api_path || "/api/control", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({direction: "STOP", power: Number(powerSlider.value), source: "manual-page-unload"}),
+          keepalive: true
+        });
+      }
+    });
+    window.addEventListener("keydown", (event) => {
+      const direction = keys[event.key];
+      if (!direction || event.repeat) {
+        if (event.code === "Space") {
+          event.preventDefault();
+          releaseDrive();
+        }
+        return;
+      }
+      if (!manualControlsEnabled(lastPacket)) return;
+      event.preventDefault();
+      if (pressedDirection !== direction) beginDrive(direction);
+    });
+    window.addEventListener("keyup", (event) => {
+      const direction = keys[event.key];
+      if (!direction) return;
+      event.preventDefault();
+      if (pressedDirection === direction) releaseDrive();
+    });
+
+    loadConfig().then(() => loadInitial());
+    connectEvents();
+    updatePower();
+    updateArmLabels();
+  </script>
+</body>
+</html>

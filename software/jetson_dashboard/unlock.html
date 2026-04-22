@@ -130,13 +130,15 @@
 </head>
 <body>
   <div class="panel">
-    <h1>Open Cargo Door</h1>
-    <p class="sub">Scan the QR code on the AMR, enter the password, then Jetson Nano will verify it and send an unlock command to Arduino.</p>
+    <h1>Cargo Door Access</h1>
+    <p class="sub">Scan the QR code on the AMR, enter the password to open the cargo door, then use the same page as a close button. If the user does not press close, the door will auto-close after 60 seconds.</p>
 
     <div class="meta">
       <div>Robot ID: <strong id="robot-id">--</strong></div>
       <div>Unlock Mode: <strong id="unlock-mode">--</strong></div>
       <div>Current State: <strong id="robot-state">--</strong></div>
+      <div>Door State: <strong id="door-state">--</strong></div>
+      <div>Auto Close: <strong id="auto-close">--</strong></div>
     </div>
 
     <label for="password">Password</label>
@@ -155,9 +157,16 @@
     const robotIdNode = document.getElementById("robot-id");
     const unlockModeNode = document.getElementById("unlock-mode");
     const robotStateNode = document.getElementById("robot-state");
+    const doorStateNode = document.getElementById("door-state");
+    const autoCloseNode = document.getElementById("auto-close");
     const passwordInput = document.getElementById("password");
     const submitBtn = document.getElementById("submit-btn");
     const resultNode = document.getElementById("result");
+    const uiState = {
+      doorAutoCloseMs: 60000,
+      doorOpen: false,
+      doorOpenedAtMs: 0,
+    };
 
     function setResult(message, ok) {
       resultNode.textContent = message;
@@ -169,7 +178,49 @@
       }
     }
 
-    async function refreshInfo() {
+    function formatSeconds(ms) {
+      return `${Math.max(0, Math.ceil(ms / 1000))} s`;
+    }
+
+    function renderDoorState() {
+      const isOpen = uiState.doorOpen;
+      doorStateNode.textContent = isOpen ? "OPEN" : "CLOSED";
+      submitBtn.textContent = isOpen ? "Close Door" : "Unlock";
+      passwordInput.disabled = isOpen;
+      passwordInput.placeholder = isOpen
+        ? "Door is open; password is not needed to close"
+        : "Enter fixed password";
+
+      if (isOpen) {
+        const deadlineMs = uiState.doorOpenedAtMs + uiState.doorAutoCloseMs;
+        const remainingMs = Math.max(0, deadlineMs - Date.now());
+        autoCloseNode.textContent = `Closes in ${formatSeconds(remainingMs)}`;
+      } else {
+        autoCloseNode.textContent = `${formatSeconds(uiState.doorAutoCloseMs)} window after open`;
+      }
+    }
+
+    function applyServerSnapshot(config, state) {
+      robotIdNode.textContent = config.robot_id || "--";
+      unlockModeNode.textContent = config.unlock_mode || "--";
+      robotStateNode.textContent = state.state || "--";
+
+      const configuredAutoCloseMs = Number(
+        config.unlock_control?.door_auto_close_ms || state.door_auto_close_ms || uiState.doorAutoCloseMs
+      );
+      if (Number.isFinite(configuredAutoCloseMs) && configuredAutoCloseMs > 0) {
+        uiState.doorAutoCloseMs = configuredAutoCloseMs;
+      }
+
+      uiState.doorOpen = String(state.cargo_door || "CLOSED").toUpperCase() === "OPEN";
+      uiState.doorOpenedAtMs = uiState.doorOpen
+        ? Number(state.unlock_last_ts_ms || Date.now())
+        : 0;
+
+      renderDoorState();
+    }
+
+    async function refreshInfo(showFailure = true) {
       try {
         const [configRes, stateRes] = await Promise.all([
           fetch("/api/config"),
@@ -179,23 +230,17 @@
         const config = await configRes.json();
         const state = await stateRes.json();
 
-        robotIdNode.textContent = config.robot_id || "--";
-        unlockModeNode.textContent = config.unlock_mode || "--";
-        robotStateNode.textContent = state.state || "--";
+        applyServerSnapshot(config, state);
       } catch (error) {
-        setResult(`Failed to load status: ${error}`, false);
+        if (showFailure) {
+          setResult(`Failed to load status: ${error}`, false);
+        }
       }
     }
 
-    async function submitUnlock() {
-      const password = passwordInput.value;
-      if (!password) {
-        setResult("Password cannot be empty.", false);
-        return;
-      }
-
+    async function submitDoorAction(body, pendingMessage) {
       submitBtn.disabled = true;
-      setResult("Sending unlock request...", null);
+      setResult(pendingMessage, null);
 
       try {
         const response = await fetch("/api/unlock", {
@@ -203,32 +248,67 @@
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ password }),
+          body: JSON.stringify(body),
         });
 
         const payload = await response.json();
-        setResult(payload.message || "Unknown response", response.ok);
-
         if (response.ok) {
-          passwordInput.value = "";
+          if (body.action === "OPEN") {
+            passwordInput.value = "";
+            uiState.doorAutoCloseMs = Number(payload.door_auto_close_ms || uiState.doorAutoCloseMs);
+            uiState.doorOpen = true;
+            uiState.doorOpenedAtMs = Date.now();
+            setResult(
+              `Door opened. Tap "Close Door" or wait ${formatSeconds(uiState.doorAutoCloseMs)} for auto-close.`,
+              true
+            );
+          } else {
+            uiState.doorOpen = false;
+            uiState.doorOpenedAtMs = 0;
+            setResult("Close-door command sent.", true);
+          }
+          renderDoorState();
+        } else {
+          setResult(payload.message || "Unknown response", false);
         }
 
-        await refreshInfo();
+        await refreshInfo(false);
       } catch (error) {
-        setResult(`Unlock request failed: ${error}`, false);
+        setResult(`Door request failed: ${error}`, false);
       } finally {
         submitBtn.disabled = false;
       }
     }
 
-    submitBtn.addEventListener("click", submitUnlock);
+    async function handleSubmit() {
+      if (uiState.doorOpen) {
+        await submitDoorAction({ action: "CLOSE" }, "Sending close-door request...");
+        return;
+      }
+
+      const password = passwordInput.value;
+      if (!password) {
+        setResult("Password cannot be empty.", false);
+        return;
+      }
+
+      await submitDoorAction(
+        { action: "OPEN", password },
+        "Sending unlock request..."
+      );
+    }
+
+    submitBtn.addEventListener("click", handleSubmit);
     passwordInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        submitUnlock();
+      if (event.key === "Enter" && !uiState.doorOpen) {
+        handleSubmit();
       }
     });
 
+    renderDoorState();
     refreshInfo();
+    setInterval(renderDoorState, 500);
+    setInterval(() => refreshInfo(false), 1500);
   </script>
 </body>
 </html>

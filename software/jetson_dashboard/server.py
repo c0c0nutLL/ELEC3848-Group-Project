@@ -21,6 +21,10 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 HOME_HTML = BASE_DIR / "home.html"
 DASHBOARD_HTML = BASE_DIR / "dashboard.html"
+MANUAL_HTML = BASE_DIR / "manual.html"
+TASKS_HTML = BASE_DIR / "tasks.html"
+STATUS_HTML = BASE_DIR / "status.html"
+DEBUG_HTML = BASE_DIR / "debug.html"
 UNLOCK_HTML = BASE_DIR / "unlock.html"
 UNLOCK_CONFIG_PATH = BASE_DIR / "unlock_config.json"
 
@@ -29,6 +33,8 @@ DEFAULT_UNLOCK_CONFIG = {
     "unlock_mode": "fixed",
     "fixed_password": "3848",
     "door_command": "OPEN_DOOR",
+    "close_door_command": "CLOSE_DOOR",
+    "door_auto_close_ms": 60000,
     "unlock_cooldown_ms": 5000,
 }
 
@@ -40,12 +46,15 @@ TASK_SELECTION_TASKS = {
     "FULL_MISSION": {
         "label": "Full Mission",
         "name_zh": "全程任务",
-        "summary": "Pickup + door cycle + delivery placeholder flow.",
+        "summary": "Pickup + delivery main flow.",
         "description": (
-            "Drive to the pickup RFID point, perform grasp / open-door / place-cargo / close-door, "
-            "then turn back, drive to the delivery RFID point, and wait for scan + password unlock."
+            "Travel to the pickup RFID station, verify pickup, run the pickup sequence, "
+            "open and close the cargo door for loading, turn around, travel to the delivery RFID station, "
+            "then wait for QR + fixed-password unlock. After the unload door opens, the same page button "
+            "becomes a close-door button, the 60-second close timer starts immediately, and manual close "
+            "takes priority."
         ),
-        "default_stage": "FULL_MISSION_PENDING",
+        "default_stage": "TRAVEL_TO_PICKUP",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
@@ -53,12 +62,13 @@ TASK_SELECTION_TASKS = {
     "OBSTACLE_MISSION": {
         "label": "Obstacle Mission",
         "name_zh": "避障任务",
-        "summary": "Standalone obstacle-avoidance validation path.",
+        "summary": "Obstacle interrupt path placeholder.",
         "description": (
-            "Run obstacle-detection and avoidance as an isolated test task. "
-            "In the final system this may also interrupt other tasks and return to a saved safe stage."
+            "Run obstacle detection and avoidance as a standalone validation path. "
+            "In the final system this also acts as an interrupt path when YOLO detects a person or object "
+            "and the distance sensor value is below the configured threshold."
         ),
-        "default_stage": "OBSTACLE_TASK_PENDING",
+        "default_stage": "OBSTACLE_MONITOR",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
@@ -66,12 +76,12 @@ TASK_SELECTION_TASKS = {
     "PICKUP_MISSION": {
         "label": "Pickup Mission",
         "name_zh": "抓取任务",
-        "summary": "Pickup-only mission placeholder.",
+        "summary": "Pickup half of full mission.",
         "description": (
-            "Run the pickup-side flow only: arrive at the pickup point, operate the arm, open the cargo door, "
-            "place the item, and close the door."
+            "Run the pickup-side flow only: travel to the pickup RFID station, verify pickup, run the pickup sequence, "
+            "open the cargo door for loading, place the item, and close the door."
         ),
-        "default_stage": "PICKUP_TASK_PENDING",
+        "default_stage": "TRAVEL_TO_PICKUP",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
@@ -79,12 +89,13 @@ TASK_SELECTION_TASKS = {
     "DELIVERY_MISSION": {
         "label": "Delivery Mission",
         "name_zh": "送货任务",
-        "summary": "Delivery-only mission placeholder.",
+        "summary": "Delivery half of full mission.",
         "description": (
-            "Run the delivery-side flow only: arrive at the delivery point, wait for scan + password unlock, "
-            "allow manual door close, or auto-close after 60 seconds."
+            "Run the delivery-side flow only: travel to the delivery RFID station, verify delivery, "
+            "wait for QR + fixed-password unlock, then switch the UI button into a close-door button and start the "
+            "60-second close timer immediately after the door opens. Manual close has priority over auto-close."
         ),
-        "default_stage": "DELIVERY_TASK_PENDING",
+        "default_stage": "TRAVEL_TO_DELIVERY",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
@@ -133,7 +144,7 @@ MAX_ARM_ANGLE_DEG = 180
 DEFAULT_ARM_LIFT_DEG = 110
 DEFAULT_ARM_GRIP_DEG = 90
 ARM_ACTIVE_WINDOW_MS = 1200
-MOCK_UNLOCK_OPEN_MS = 5000
+MOCK_UNLOCK_OPEN_MS = 60000
 MOCK_DISTANCE_MIN_CM = 8.0
 MOCK_DISTANCE_MAX_CM = 150.0
 MODE_PROTOCOL_VERSION = "interrupt-resume-v1"
@@ -284,7 +295,7 @@ def build_task_selection_catalog() -> List[Dict[str, Any]]:
             {
                 "id": task_id,
                 "label": definition["label"],
-                "name_zh": definition["name_zh"],
+                "name_zh": definition["label"],
                 "summary": definition["summary"],
                 "description": definition["description"],
                 "placeholder_entry_stage": definition["default_stage"],
@@ -308,7 +319,7 @@ def build_task_selection_state(
     state = {
         "selectedTask": task_id,
         "selectedTaskLabel": definition["label"],
-        "selectedTaskName": definition["name_zh"],
+        "selectedTaskName": definition["label"],
         "taskDescription": definition["description"],
         "taskSummary": definition["summary"],
         "taskStatus": "IDLE",
@@ -332,7 +343,7 @@ def build_task_selection_state(
 
     state["selectedTask"] = task_id
     state["selectedTaskLabel"] = definition["label"]
-    state["selectedTaskName"] = definition["name_zh"]
+    state["selectedTaskName"] = definition["label"]
     state["taskDescription"] = definition["description"]
     state["taskSummary"] = definition["summary"]
     state["isManualTest"] = bool(definition["is_manual_test"])
@@ -558,8 +569,13 @@ def queue_serial_command(command: str) -> Tuple[bool, str]:
 
     if bridge_mode == "mock":
         print(f"[serial-mock] command={command}")
-        if command == str(unlock_config.get("door_command", "OPEN_DOOR")):
-            mock_unlock_until_ms = current_time_ms() + MOCK_UNLOCK_OPEN_MS
+        open_command = str(unlock_config.get("door_command", "OPEN_DOOR"))
+        close_command = str(unlock_config.get("close_door_command", "CLOSE_DOOR"))
+        if command == open_command:
+            open_window_ms = int(unlock_config.get("door_auto_close_ms", MOCK_UNLOCK_OPEN_MS))
+            mock_unlock_until_ms = current_time_ms() + max(0, open_window_ms)
+        elif command == close_command:
+            mock_unlock_until_ms = 0
         return True, ""
 
     if not bridge_is_connected():
@@ -1439,8 +1455,6 @@ def verify_unlock_password(password: str) -> Tuple[bool, str]:
 
 
 def trigger_unlock(password: str, client_ip: str) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
-    global last_unlock_sent_ms
-
     ok, message = verify_unlock_password(password)
     if not ok:
         record_unlock_event(False, message, client_ip)
@@ -1451,9 +1465,41 @@ def trigger_unlock(password: str, client_ip: str) -> Tuple[bool, Dict[str, Any],
         })
         return False, {"ok": False, "message": message}, HTTPStatus.FORBIDDEN
 
+    return trigger_door_command(
+        command=str(unlock_config.get("door_command", "OPEN_DOOR")),
+        client_ip=client_ip,
+        success_status="ACCEPTED",
+        success_state_message="fixed password accepted, unlock command sent",
+        success_response_message="unlock command sent",
+        apply_cooldown=True,
+    )
+
+
+def trigger_close_door(client_ip: str) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    return trigger_door_command(
+        command=str(unlock_config.get("close_door_command", "CLOSE_DOOR")),
+        client_ip=client_ip,
+        success_status="CLOSE_SENT",
+        success_state_message="close-door command sent",
+        success_response_message="close-door command sent",
+        apply_cooldown=False,
+    )
+
+
+def trigger_door_command(
+    command: str,
+    client_ip: str,
+    *,
+    success_status: str,
+    success_state_message: str,
+    success_response_message: str,
+    apply_cooldown: bool,
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    global last_unlock_sent_ms
+
     cooldown_ms = int(unlock_config.get("unlock_cooldown_ms", 0))
+    door_auto_close_ms = int(unlock_config.get("door_auto_close_ms", MOCK_UNLOCK_OPEN_MS))
     now_ms = current_time_ms()
-    command = str(unlock_config.get("door_command", "OPEN_DOOR"))
     event_success = False
     event_reason = ""
     event_command = ""
@@ -1462,7 +1508,7 @@ def trigger_unlock(password: str, client_ip: str) -> Tuple[bool, Dict[str, Any],
     response_status = HTTPStatus.OK
 
     with unlock_lock:
-        if cooldown_ms > 0 and now_ms - last_unlock_sent_ms < cooldown_ms:
+        if apply_cooldown and cooldown_ms > 0 and now_ms - last_unlock_sent_ms < cooldown_ms:
             retry_ms = cooldown_ms - (now_ms - last_unlock_sent_ms)
             message = f"cooldown active, retry in {retry_ms} ms"
             event_success = False
@@ -1488,18 +1534,27 @@ def trigger_unlock(password: str, client_ip: str) -> Tuple[bool, Dict[str, Any],
                 response_payload = {"ok": False, "message": message}
                 response_status = HTTPStatus.SERVICE_UNAVAILABLE
             else:
-                last_unlock_sent_ms = now_ms
+                if apply_cooldown:
+                    last_unlock_sent_ms = now_ms
                 event_success = True
                 event_reason = "command queued"
                 event_command = command
                 state_patch = {
-                    "unlock_status": "ACCEPTED",
-                    "unlock_message": "fixed password accepted, unlock command sent",
+                    "unlock_status": success_status,
+                    "unlock_message": success_state_message,
                     "unlock_last_client": client_ip,
                     "unlock_last_command": command,
-                    "unlock_last_ts_ms": now_ms,
+                    "door_auto_close_ms": door_auto_close_ms,
+                    "cargo_door": "OPEN" if apply_cooldown else "CLOSED",
                 }
-                response_payload = {"ok": True, "message": "unlock command sent", "command": command}
+                if apply_cooldown:
+                    state_patch["unlock_last_ts_ms"] = now_ms
+                response_payload = {
+                    "ok": True,
+                    "message": success_response_message,
+                    "command": command,
+                    "door_auto_close_ms": door_auto_close_ms,
+                }
                 response_status = HTTPStatus.OK
 
     record_unlock_event(event_success, event_reason, client_ip, command_sent=event_command)
@@ -1532,32 +1587,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.serve_file(DASHBOARD_HTML)
             return
 
+        if parsed.path == "/telemetry":
+            self.serve_file(DASHBOARD_HTML)
+            return
+
+        if parsed.path == "/manual":
+            self.serve_file(MANUAL_HTML)
+            return
+
+        if parsed.path == "/tasks":
+            self.serve_file(TASKS_HTML)
+            return
+
+        if parsed.path == "/status":
+            self.serve_file(STATUS_HTML)
+            return
+
+        if parsed.path == "/debug":
+            self.serve_file(DEBUG_HTML)
+            return
+
         if parsed.path == "/unlock":
             self.serve_file(UNLOCK_HTML)
             return
 
-        if parsed.path == "/telemetry":
-            self.redirect("/dashboard#telemetry-panel")
-            return
-
-        if parsed.path == "/manual":
-            self.redirect("/dashboard#drive-panel")
-            return
-
-        if parsed.path == "/tasks":
-            self.redirect("/dashboard#auto-panel")
-            return
-
         if parsed.path == "/arm":
-            self.redirect("/dashboard#arm-panel")
-            return
-
-        if parsed.path == "/status":
-            self.redirect("/dashboard#telemetry-panel")
-            return
-
-        if parsed.path == "/debug":
-            self.redirect("/dashboard#debug-panel")
+            self.redirect("/manual")
             return
 
         if parsed.path == "/api/state":
@@ -1713,6 +1768,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "step_deg": 5,
                 "loopback_only": True,
             },
+            "unlock_control": {
+                "api_path": "/api/unlock",
+                "door_command": unlock_config.get("door_command", "OPEN_DOOR"),
+                "close_door_command": unlock_config.get("close_door_command", "CLOSE_DOOR"),
+                "door_auto_close_ms": int(unlock_config.get("door_auto_close_ms", MOCK_UNLOCK_OPEN_MS)),
+                "supports_manual_close": True,
+            },
             "mode_control": {
                 "api_path": "/api/mode",
                 "actions": sorted(ALLOWED_MODE_ACTIONS),
@@ -1804,13 +1866,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
             return
 
-        password = str(data.get("password", ""))
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        ok, payload, status = trigger_unlock(password, client_ip)
-        if ok:
+        action = str(data.get("action", "OPEN")).upper()
+
+        if action == "OPEN":
+            password = str(data.get("password", ""))
+            _, payload, status = trigger_unlock(password, client_ip)
             self.send_json(payload, status)
-        else:
+            return
+
+        if action == "CLOSE":
+            _, payload, status = trigger_close_door(client_ip)
             self.send_json(payload, status)
+            return
+
+        self.send_json({"ok": False, "message": f"unsupported unlock action: {action}"}, HTTPStatus.BAD_REQUEST)
 
     def handle_control_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
@@ -2019,6 +2089,7 @@ def main() -> None:
         "unlock_mode": unlock_config.get("unlock_mode", "fixed"),
         "unlock_status": "IDLE",
         "unlock_message": "",
+        "door_auto_close_ms": int(unlock_config.get("door_auto_close_ms", MOCK_UNLOCK_OPEN_MS)),
         **build_control_patch(),
         **build_arm_patch(),
     }

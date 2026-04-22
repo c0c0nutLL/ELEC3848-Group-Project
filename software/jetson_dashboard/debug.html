@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMR Debug View</title>
+  <style>
+    :root{
+      --bg:#f3f1ea;
+      --panel:#fffdf8;
+      --line:#d7d1c4;
+      --text:#1d1c19;
+      --muted:#6d675c;
+      --accent:#206a5d;
+      --shadow:0 10px 30px rgba(29,28,25,.05)
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+      background:
+        radial-gradient(circle at top left,#fff5d9 0,transparent 28%),
+        radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),
+        var(--bg);
+      color:var(--text)
+    }
+    a{text-decoration:none;color:inherit}
+    .page{max-width:1380px;margin:0 auto;padding:24px}
+    .hero,.hero-links,.panel-head,.log-title{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center
+    }
+    .hero{margin-bottom:16px}
+    .hero-links{flex-wrap:wrap;justify-content:flex-end}
+    .hero h1,.panel-head h2{margin:0}
+    .sub,.log-meta{margin:6px 0 0;color:var(--muted);line-height:1.5}
+    .panel,.card,.mini,.pill{
+      border:1px solid var(--line);
+      background:var(--panel);
+      box-shadow:var(--shadow)
+    }
+    .panel{
+      border-radius:18px;
+      padding:16px;
+      margin-bottom:16px
+    }
+    .mini,.pill{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px;
+      padding:9px 13px
+    }
+    .label{
+      font-size:12px;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      margin-bottom:8px
+    }
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
+    .card{
+      border-radius:14px;
+      padding:14px;
+      background:rgba(255,255,255,.58)
+    }
+    .value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}
+    .debug-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+    .log-list{list-style:none;padding:0;margin:0;display:grid;gap:10px;max-height:520px;overflow:auto}
+    .log-list li{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.55)}
+    pre{
+      margin:0;
+      padding:14px;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background:#f7f4ed;
+      overflow:auto;
+      min-height:520px;
+      white-space:pre-wrap;
+      word-break:break-word
+    }
+    @media (max-width:1200px){
+      .debug-grid{grid-template-columns:1fr}
+    }
+    @media (max-width:820px){
+      .page{padding:18px}
+      .hero,.hero-links,.panel-head,.log-title{flex-direction:column;align-items:flex-start}
+      .cards{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <div class="label">Debug View</div>
+        <h1>AMR Debug And Raw Data</h1>
+        <p class="sub">Dedicated debug page for recent events, raw telemetry JSON, and raw task-selection placeholder state. This page is read-only and keeps the existing event and history APIs intact.</p>
+      </div>
+      <div class="hero-links">
+        <a class="mini" href="/">Home</a>
+        <a class="mini" href="/telemetry">Telemetry</a>
+        <a class="mini" href="/manual">Manual + Arm</a>
+        <a class="mini" href="/tasks">Tasks</a>
+        <a class="mini" href="/status">Status</a>
+        <a class="mini" href="/unlock">Unlock</a>
+        <span class="pill" id="live-text">Waiting for data</span>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">Runtime Summary</div>
+          <h2>Debug Snapshot</h2>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="label">State</div><div id="state" class="value">--</div></div>
+        <div class="card"><div class="label">Bridge</div><div id="bridge_status" class="value">--</div></div>
+        <div class="card"><div class="label">Current Mode</div><div id="current_mode" class="value">--</div></div>
+        <div class="card"><div class="label">Auto Stage</div><div id="current_auto_stage" class="value">--</div></div>
+        <div class="card"><div class="label">Task Status</div><div id="taskStatus" class="value small">--</div></div>
+        <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
+      </div>
+    </section>
+
+    <div class="debug-grid">
+      <section class="panel">
+        <div class="label">Recent Events</div>
+        <h2>Live Event Log</h2>
+        <ul id="log-list" class="log-list"></ul>
+      </section>
+
+      <section class="panel">
+        <div class="label">Latest JSON</div>
+        <h2>Raw Telemetry</h2>
+        <pre id="raw-json">{}</pre>
+      </section>
+
+      <section class="panel">
+        <div class="label">Task Placeholder</div>
+        <h2>Raw Task Selection State</h2>
+        <pre id="task-json">{}</pre>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const liveText = document.getElementById("live-text");
+    const logList = document.getElementById("log-list");
+    const rawJson = document.getElementById("raw-json");
+    const taskJson = document.getElementById("task-json");
+    let lastLogSignature = "";
+
+    function fmt(value) {
+      if (value === undefined || value === null || value === "") return "--";
+      return String(value);
+    }
+
+    function setLive(text) {
+      liveText.textContent = text;
+    }
+
+    function buildLogSignature(packet) {
+      return [
+        packet.state || "",
+        packet.current_mode || "",
+        packet.current_auto_stage || "",
+        packet.saved_auto_stage || "",
+        packet.resume_pending === true,
+        packet.delivery_result || "",
+        packet.control_direction || "",
+        packet.motor_pwm !== undefined && packet.motor_pwm !== null ? packet.motor_pwm : "",
+        packet.arm_lift_deg !== undefined && packet.arm_lift_deg !== null ? packet.arm_lift_deg : "",
+        packet.arm_grip_deg !== undefined && packet.arm_grip_deg !== null ? packet.arm_grip_deg : "",
+        packet.arm_status || "",
+        packet.fault || ""
+      ].join("|");
+    }
+
+    function appendLog(packet) {
+      const signature = buildLogSignature(packet);
+      if (signature === lastLogSignature) return;
+      lastLogSignature = signature;
+
+      const item = document.createElement("li");
+      const title = document.createElement("div");
+      title.className = "log-title";
+      const stateNode = document.createElement("span");
+      stateNode.textContent = packet.state || "--";
+      const resultNode = document.createElement("span");
+      resultNode.textContent = packet.delivery_result || "--";
+      title.appendChild(stateNode);
+      title.appendChild(resultNode);
+
+      const meta = document.createElement("div");
+      meta.className = "log-meta";
+      meta.textContent =
+        `Mode=${packet.current_mode || "--"}  Auto=${packet.current_auto_stage || "--"}  ` +
+        `Saved=${packet.saved_auto_stage || "--"}  Drive=${packet.control_direction || "--"}  ` +
+        `PWM=${packet.motor_pwm !== undefined && packet.motor_pwm !== null ? packet.motor_pwm : "--"}  Resume=${packet.resume_pending === true}`;
+
+      item.appendChild(title);
+      item.appendChild(meta);
+      logList.prepend(item);
+      while (logList.children.length > 30) logList.removeChild(logList.lastChild);
+    }
+
+    function renderTelemetry(packet) {
+      document.getElementById("state").textContent = fmt(packet.state);
+      document.getElementById("bridge_status").textContent = fmt(packet.bridge_status);
+      document.getElementById("current_mode").textContent = fmt(packet.current_mode);
+      document.getElementById("current_auto_stage").textContent = fmt(packet.current_auto_stage);
+      document.getElementById("fault").textContent = fmt(packet.fault);
+      rawJson.textContent = JSON.stringify(packet, null, 2);
+      setLive("Live update: " + new Date().toLocaleTimeString());
+      appendLog(packet);
+    }
+
+    function renderTaskSelection(packet) {
+      document.getElementById("taskStatus").textContent = fmt(packet.taskStatus);
+      taskJson.textContent = JSON.stringify(packet, null, 2);
+    }
+
+    async function loadInitial() {
+      try {
+        const [stateRes, historyRes, taskRes] = await Promise.all([
+          fetch("/api/state"),
+          fetch("/api/history"),
+          fetch("/api/task-selection/state")
+        ]);
+
+        if (stateRes.ok) {
+          renderTelemetry(await stateRes.json());
+        }
+        if (historyRes.ok) {
+          const history = await historyRes.json();
+          logList.innerHTML = "";
+          lastLogSignature = "";
+          history.slice().reverse().forEach((packet) => appendLog(packet));
+        }
+        if (taskRes.ok) {
+          renderTaskSelection(await taskRes.json());
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function refreshTaskSelection() {
+      try {
+        const response = await fetch("/api/task-selection/state");
+        if (!response.ok) return;
+        renderTaskSelection(await response.json());
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function connectEvents() {
+      const source = new EventSource("/events");
+      source.onmessage = (event) => renderTelemetry(JSON.parse(event.data));
+      source.onerror = () => setLive("Disconnected, retrying...");
+    }
+
+    loadInitial();
+    connectEvents();
+    window.setInterval(() => {
+      void refreshTaskSelection();
+    }, 5000);
+  </script>
+</body>
+</html>

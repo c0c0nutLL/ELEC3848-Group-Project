@@ -236,7 +236,8 @@
           <a class="mini" href="/manual">Manual</a>
           <a class="mini" href="/tasks">Tasks</a>
           <a class="mini" href="/arm">Arm</a>
-          <a class="mini" href="/debug">Status / Debug</a>
+          <a class="mini" href="/status">Status</a>
+          <a class="mini" href="/debug">Debug</a>
           <a class="mini" href="/unlock">Unlock</a>
         </div>
         <div class="pill">
@@ -509,7 +510,7 @@
         name_zh: "全程任务",
         summary: "直行 -> 取货 -> 开门放货 -> 送货 -> 用户取货",
         description: "小车直行到取货点 RFID，执行抓取、开门、放入、关门、调头，再直行到送货点 RFID，等待扫码和密码开门，支持用户手动关门或 60 秒后自动关门。",
-        placeholder_entry_stage: "FULL_MISSION_PENDING",
+        placeholder_entry_stage: "TRAVEL_TO_PICKUP",
         supports_resume: true,
         is_manual_test: false,
         obstacle_interrupt_enabled: true
@@ -520,7 +521,7 @@
         name_zh: "避障任务",
         summary: "独立避障流程或测试占位",
         description: "单独执行避障相关流程或调试路径。最终系统里，避障任务也可能作为其他任务的打断子任务插入，并在结束后返回原任务阶段或安全恢复点。",
-        placeholder_entry_stage: "OBSTACLE_TASK_PENDING",
+        placeholder_entry_stage: "OBSTACLE_MONITOR",
         supports_resume: true,
         is_manual_test: false,
         obstacle_interrupt_enabled: true
@@ -531,7 +532,7 @@
         name_zh: "抓取任务",
         summary: "仅执行取货、开门、放入、关门",
         description: "只执行取货相关动作，到达取货点后操控机械臂完成抓取、开门、放入、关门，不包含后续送货流程。",
-        placeholder_entry_stage: "PICKUP_TASK_PENDING",
+        placeholder_entry_stage: "TRAVEL_TO_PICKUP",
         supports_resume: true,
         is_manual_test: false,
         obstacle_interrupt_enabled: true
@@ -542,7 +543,7 @@
         name_zh: "送货任务",
         summary: "仅执行送货开门与取货等待",
         description: "只执行送货相关部分，到达送货点后等待用户扫码和输入密码开门取货，支持用户手动关门，否则 60 秒后自动关门。",
-        placeholder_entry_stage: "DELIVERY_TASK_PENDING",
+        placeholder_entry_stage: "TRAVEL_TO_DELIVERY",
         supports_resume: true,
         is_manual_test: false,
         obstacle_interrupt_enabled: true

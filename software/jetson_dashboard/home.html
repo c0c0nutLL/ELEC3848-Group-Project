@@ -140,7 +140,7 @@
       <div>
         <div class="label">Unified Entry</div>
         <h1>AMR Control Home</h1>
-        <p class="sub">Central entry for Jetson dashboard pages, task selection, manual control, unlock, and debug views. Most control functions currently live inside the unified dashboard page and are exposed here through stable URLs.</p>
+        <p class="sub">Central entry for Jetson dashboard pages, task selection, manual control, unlock, status, and debug views. Core control functions now have their own pages, while the original full dashboard is still kept as a compatibility surface.</p>
       </div>
       <div class="hero-actions">
         <a class="quick-link primary" href="/dashboard">Open Full Dashboard</a>
@@ -175,7 +175,7 @@
         <div>
           <div class="label">Navigation</div>
           <h2>Main Entry Points</h2>
-          <p class="sub">Use these cards to jump to real pages or to anchored sections inside the current dashboard. This keeps the URL structure stable before the UI is split further.</p>
+          <p class="sub">Use these cards to jump to the main UI pages. Manual and arm control now share one page, while status and debug each have their own dedicated view.</p>
         </div>
       </div>
 
@@ -187,7 +187,8 @@
         <a class="mini" href="/manual">Manual</a>
         <a class="mini" href="/tasks">Tasks</a>
         <a class="mini" href="/arm">Arm</a>
-        <a class="mini" href="/debug">Status / Debug</a>
+        <a class="mini" href="/status">Status</a>
+        <a class="mini" href="/debug">Debug</a>
         <a class="mini" href="/unlock">Unlock</a>
       </div>
     </section>
@@ -210,16 +211,16 @@
       {
         title: "Telemetry",
         routeKey: "telemetry",
-        type: "Dashboard Section",
+        type: "Standalone Page",
         state: "Live",
-        description: "Open the live telemetry and top-level robot status view inside the existing dashboard."
+        description: "Open the telemetry dashboard page for the live robot state and combined monitoring view."
       },
       {
         title: "Manual Control",
         routeKey: "manual",
-        type: "Dashboard Section",
+        type: "Standalone Page",
         state: "Live",
-        description: "Jump to the existing drive-pad and chassis control area without changing the current dashboard architecture."
+        description: "Open the dedicated manual-control page. This page now includes both chassis and arm control."
       },
       {
         title: "Unlock",
@@ -231,30 +232,37 @@
       {
         title: "Task Selection",
         routeKey: "tasks",
-        type: "Dashboard Section",
+        type: "Standalone Page",
         state: "Live",
-        description: "Open the new task-selection placeholder module and its reserved task-state APIs."
+        description: "Open the dedicated task-selection page and the current interrupt/resume task controls."
       },
       {
         title: "Arm Control",
         routeKey: "arm",
-        type: "Dashboard Section",
+        type: "Shared Manual Page",
         state: "Live",
-        description: "Jump to the existing two-servo arm control block inside the combined dashboard page."
+        description: "Open the shared Manual + Arm page. Arm control is no longer a separate dashboard anchor."
       },
       {
-        title: "System Status / Debug",
-        routeKey: "debug",
-        type: "Dashboard Section",
+        title: "System Status",
+        routeKey: "status",
+        type: "Standalone Page",
         state: "Live",
-        description: "Open the current event log and raw telemetry area for debugging and integration checks."
+        description: "Open the dedicated system-status page for run mode, bridge health, sensors, actuators, and task placeholder state."
+      },
+      {
+        title: "Debug",
+        routeKey: "debug",
+        type: "Standalone Page",
+        state: "Live",
+        description: "Open the dedicated debug page for recent events, raw telemetry JSON, and raw task-selection state."
       },
       {
         title: "Full Dashboard",
         routeKey: "dashboard",
-        type: "Standalone Page",
+        type: "Compatibility Page",
         state: "Live",
-        description: "Open the full combined dashboard with telemetry, task control, manual drive, power, and arm controls."
+        description: "Open the original combined dashboard. It is still available, but the main workflow now prefers the split pages above."
       }
     ];
 

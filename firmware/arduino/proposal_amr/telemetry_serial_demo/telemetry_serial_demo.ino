@@ -50,7 +50,7 @@ const unsigned long TELEMETRY_INTERVAL_MS = 200UL;
 const unsigned long DISTANCE_SAMPLE_INTERVAL_MS = 100UL;
 const unsigned long COMMAND_TIMEOUT_MS = 700UL;
 const unsigned long ARM_ACTIVE_WINDOW_MS = 1200UL;
-const unsigned long REMOTE_UNLOCK_OPEN_MS = 5000UL;
+const unsigned long REMOTE_UNLOCK_OPEN_MS = 60000UL;
 const unsigned long ULTRASONIC_TIMEOUT_US = 30000UL;
 const unsigned long HEADING_SAMPLE_INTERVAL_MS = 8UL;
 
@@ -732,6 +732,12 @@ void handleCommand(const char *command) {
     return;
   }
 
+  if (strcmp(token, "CLOSE_DOOR") == 0) {
+    remoteUnlockUntilMs = 0;
+    clearFault();
+    return;
+  }
+
   if (strcmp(token, "STOP") == 0) {
     applyDriveCommand(DRIVE_STOP, motorPwm);
     return;
@@ -833,6 +839,7 @@ void printHelp() {
   Serial.println(F("  ARM GRIP <0-180>"));
   Serial.println(F("  GYRO"));
   Serial.println(F("  OPEN_DOOR"));
+  Serial.println(F("  CLOSE_DOOR"));
 }
 
 void setup() {

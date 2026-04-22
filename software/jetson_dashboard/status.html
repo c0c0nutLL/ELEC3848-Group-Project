@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMR System Status</title>
+  <style>
+    :root{
+      --bg:#f3f1ea;
+      --panel:#fffdf8;
+      --line:#d7d1c4;
+      --text:#1d1c19;
+      --muted:#6d675c;
+      --accent:#206a5d;
+      --shadow:0 10px 30px rgba(29,28,25,.05)
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif;
+      background:
+        radial-gradient(circle at top left,#fff5d9 0,transparent 28%),
+        radial-gradient(circle at bottom right,#d8efe7 0,transparent 30%),
+        var(--bg);
+      color:var(--text)
+    }
+    a{text-decoration:none;color:inherit}
+    .page{max-width:1380px;margin:0 auto;padding:24px}
+    .hero,.hero-links,.panel-head{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center
+    }
+    .hero{margin-bottom:16px}
+    .hero-links{flex-wrap:wrap;justify-content:flex-end}
+    .hero h1,.panel-head h2{margin:0}
+    .sub{margin:6px 0 0;color:var(--muted);line-height:1.5}
+    .panel,.card,.mini,.pill{
+      border:1px solid var(--line);
+      background:var(--panel);
+      box-shadow:var(--shadow)
+    }
+    .panel{
+      border-radius:18px;
+      padding:16px;
+      margin-bottom:16px
+    }
+    .mini,.pill{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px;
+      padding:9px 13px
+    }
+    .label{
+      font-size:12px;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      margin-bottom:8px
+    }
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px}
+    .card{
+      border-radius:14px;
+      padding:14px;
+      background:rgba(255,255,255,.58)
+    }
+    .value{font-size:22px;font-weight:700;line-height:1.2;word-break:break-word}
+    .small{font-size:17px}
+    @media (max-width:820px){
+      .page{padding:18px}
+      .hero,.hero-links,.panel-head{flex-direction:column;align-items:flex-start}
+      .cards{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <div>
+        <div class="label">System View</div>
+        <h1>AMR System Status</h1>
+        <p class="sub">Dedicated live status page for run mode, task stage, bridge health, sensors, actuators, and current task-selection placeholder state.</p>
+      </div>
+      <div class="hero-links">
+        <a class="mini" href="/">Home</a>
+        <a class="mini" href="/telemetry">Telemetry</a>
+        <a class="mini" href="/manual">Manual + Arm</a>
+        <a class="mini" href="/tasks">Tasks</a>
+        <a class="mini" href="/debug">Debug</a>
+        <a class="mini" href="/unlock">Unlock</a>
+        <span class="pill" id="live-text">Waiting for data</span>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">Robot Status</div>
+          <h2>Live Robot State</h2>
+          <p class="sub">Operational state from the current Jetson telemetry stream.</p>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="label">State</div><div id="state" class="value">--</div></div>
+        <div class="card"><div class="label">Current Mode</div><div id="current_mode" class="value">--</div></div>
+        <div class="card"><div class="label">Auto Stage</div><div id="current_auto_stage" class="value small">--</div></div>
+        <div class="card"><div class="label">Saved Stage</div><div id="saved_auto_stage" class="value small">--</div></div>
+        <div class="card"><div class="label">Resume Pending</div><div id="resume_pending" class="value">--</div></div>
+        <div class="card"><div class="label">Task Active</div><div id="task_active" class="value">--</div></div>
+        <div class="card"><div class="label">Resume Note</div><div id="resume_note" class="value small">--</div></div>
+        <div class="card"><div class="label">Bridge</div><div id="bridge_status" class="value">--</div></div>
+        <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">Actuators</div>
+          <h2>Drive, Arm, And Cargo Status</h2>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="label">Drive Direction</div><div id="control_direction" class="value">--</div></div>
+        <div class="card"><div class="label">Motor Power</div><div id="motor_pwm" class="value">--</div></div>
+        <div class="card"><div class="label">Drive Status</div><div id="control_status" class="value">--</div></div>
+        <div class="card"><div class="label">Arm Status</div><div id="arm_status" class="value">--</div></div>
+        <div class="card"><div class="label">Arm Lift</div><div id="arm_lift_deg" class="value">--</div></div>
+        <div class="card"><div class="label">Arm Gripper</div><div id="arm_grip_deg" class="value">--</div></div>
+        <div class="card"><div class="label">Cargo Door</div><div id="cargo_door" class="value">--</div></div>
+        <div class="card"><div class="label">Delivery Result</div><div id="delivery_result" class="value">--</div></div>
+        <div class="card"><div class="label">Target Station</div><div id="target_station" class="value small">--</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">Sensors</div>
+          <h2>Distance, Heading, And RFID</h2>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="label">Right Distance</div><div id="right_cm" class="value">--</div></div>
+        <div class="card"><div class="label">Left Distance</div><div id="left_cm" class="value">--</div></div>
+        <div class="card"><div class="label">Avg Distance</div><div id="avg_cm" class="value">--</div></div>
+        <div class="card"><div class="label">Diff</div><div id="diff_cm" class="value">--</div></div>
+        <div class="card"><div class="label">Heading</div><div id="heading_deg" class="value">--</div></div>
+        <div class="card"><div class="label">RFID Tag</div><div id="rfid_tag" class="value small">--</div></div>
+        <div class="card"><div class="label">RFID Match</div><div id="rfid_match" class="value">--</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="label">Task Placeholder</div>
+          <h2>Task Selection Snapshot</h2>
+          <p class="sub">This section follows the reserved task-selection state that will later connect to the real mission runtime.</p>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="label">Selected Task</div><div id="selectedTaskName" class="value small">--</div></div>
+        <div class="card"><div class="label">Task Status</div><div id="taskStatus" class="value small">--</div></div>
+        <div class="card"><div class="label">Current Stage</div><div id="currentStage" class="value small">--</div></div>
+        <div class="card"><div class="label">Resume Available</div><div id="resumeAvailable" class="value">--</div></div>
+        <div class="card"><div class="label">Saved Stage</div><div id="savedStage" class="value small">--</div></div>
+        <div class="card"><div class="label">Obstacle Interrupt</div><div id="obstacleInterruptActive" class="value">--</div></div>
+        <div class="card"><div class="label">Obstacle Hook</div><div id="isObstacleInterruptEnabled" class="value">--</div></div>
+        <div class="card"><div class="label">Status Source</div><div id="statusSource" class="value small">--</div></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const stateFields = [
+      "state","current_mode","current_auto_stage","saved_auto_stage","resume_pending","task_active","resume_note",
+      "control_direction","motor_pwm","control_status","arm_status","arm_lift_deg","arm_grip_deg","cargo_door",
+      "delivery_result","target_station","bridge_status","fault","right_cm","left_cm","avg_cm","diff_cm","heading_deg","rfid_tag","rfid_match"
+    ];
+    const taskFields = [
+      "selectedTaskName","taskStatus","currentStage","resumeAvailable","savedStage","obstacleInterruptActive","isObstacleInterruptEnabled","statusSource"
+    ];
+    const liveText = document.getElementById("live-text");
+
+    function fmt(value, key) {
+      if (value === undefined || value === null || value === "") return "--";
+      if (typeof value === "number" && !Number.isFinite(value)) return "--";
+      if (typeof value === "number" && key.endsWith("_cm")) return value.toFixed(1) + " cm";
+      if (typeof value === "number" && (key === "heading_deg" || key === "arm_lift_deg" || key === "arm_grip_deg")) return Math.round(value) + " deg";
+      if (typeof value === "number" && key === "motor_pwm") return String(value);
+      if (typeof value === "boolean") return value ? "true" : "false";
+      return String(value);
+    }
+
+    function setLive(text) {
+      liveText.textContent = text;
+    }
+
+    function renderState(packet) {
+      stateFields.forEach((key) => {
+        const node = document.getElementById(key);
+        if (node) node.textContent = fmt(packet[key], key);
+      });
+      setLive("Live update: " + new Date().toLocaleTimeString());
+    }
+
+    function renderTaskSelection(packet) {
+      const view = {...packet};
+      if (!view.selectedTaskName && view.selectedTask) {
+        view.selectedTaskName = view.selectedTask;
+      }
+      taskFields.forEach((key) => {
+        const node = document.getElementById(key);
+        if (node) node.textContent = fmt(view[key], key);
+      });
+    }
+
+    async function loadInitial() {
+      try {
+        const [stateRes, taskRes] = await Promise.all([
+          fetch("/api/state"),
+          fetch("/api/task-selection/state")
+        ]);
+        if (stateRes.ok) {
+          const state = await stateRes.json();
+          renderState(state);
+        }
+        if (taskRes.ok) {
+          const task = await taskRes.json();
+          renderTaskSelection(task);
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    async function refreshTaskSelection() {
+      try {
+        const response = await fetch("/api/task-selection/state");
+        if (!response.ok) return;
+        renderTaskSelection(await response.json());
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function connectEvents() {
+      const source = new EventSource("/events");
+      source.onmessage = (event) => renderState(JSON.parse(event.data));
+      source.onerror = () => setLive("Disconnected, retrying...");
+    }
+
+    loadInitial();
+    connectEvents();
+    window.setInterval(() => {
+      void refreshTaskSelection();
+    }, 5000);
+  </script>
+</body>
+</html>

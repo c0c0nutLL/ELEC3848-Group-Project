@@ -1,70 +1,78 @@
 # Jetson Dashboard
 
-This directory contains the current Jetson Nano web dashboard, home page, unlock page, and serial bridge.
+This directory contains the current Jetson Nano web UI, serial bridge, and task-selection placeholder APIs.
 
-Current path:
+Current data path:
 
 - `Arduino -> USB serial -> Jetson Nano -> browser`
 - `Browser -> Jetson HTTP API -> USB serial -> Arduino`
-- `Phone -> /unlock -> password verify -> OPEN_DOOR -> Arduino`
+- `Phone -> /unlock -> password verify -> OPEN_DOOR / CLOSE_DOOR -> Arduino`
 
 ## Main Files
 
 - [server.py](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/server.py)
   - main Jetson service
   - reads Arduino JSON telemetry over serial
-  - serves the home page, dashboard, unlock page, and HTTP APIs
+  - serves the home page, split UI pages, dashboard, unlock page, and HTTP APIs
   - handles interrupt/resume demo control
   - exposes task-selection placeholder APIs
 - [home.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/home.html)
   - unified UI entry page
-  - links to all major pages and dashboard sections
+  - links to all major pages
   - shows a lightweight live system snapshot
 - [dashboard.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/dashboard.html)
-  - existing combined telemetry/control page
-  - task-selection placeholder UI
-  - interrupt / resume demo controls
-  - manual drive controls
-  - PWM slider
-  - arm controls
-  - debug log and raw telemetry
+  - original combined dashboard
+  - still contains telemetry, task selection, manual controls, arm controls, and debug blocks
+  - kept as a compatibility page
+- [manual.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/manual.html)
+  - dedicated manual-control page
+  - includes both chassis control and arm control
+- [tasks.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/tasks.html)
+  - dedicated task-selection page
+  - includes placeholder task presets and interrupt/resume demo controls
+- [status.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/status.html)
+  - dedicated live system-status page
+  - shows bridge, mode, sensors, actuators, and task placeholder snapshot
+- [debug.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/debug.html)
+  - dedicated debug page
+  - shows event log, raw telemetry JSON, and raw task-selection JSON
 - [unlock.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/unlock.html)
   - unlock page for phone access
 - [unlock_config.json](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/unlock_config.json)
-  - fixed password and unlock command config
+  - fixed password, open/close command, and auto-close config
 
 ## Page Structure
 
-The UI is now organized around a simple and explicit entry model:
+The UI is now organized around a clear home-page entry model:
 
 - `/`
   - `Home`
   - default entry page for the whole UI system
 - `/dashboard`
-  - existing combined dashboard page
-- `/unlock`
-  - existing unlock page
-
-Additional stable entry URLs are now provided for major feature areas:
-
+  - original combined dashboard
+  - kept for compatibility and full-surface access
 - `/telemetry`
-  - redirects to the telemetry/status section inside `/dashboard`
+  - telemetry page entry
+  - currently serves the same page as `/dashboard`
 - `/manual`
-  - redirects to the manual drive section inside `/dashboard`
-- `/tasks`
-  - redirects to the task-selection section inside `/dashboard`
+  - dedicated manual + arm page
 - `/arm`
-  - redirects to the arm-control section inside `/dashboard`
+  - redirects to `/manual`
+- `/tasks`
+  - dedicated task-selection page
 - `/status`
-  - redirects to the live status area inside `/dashboard`
+  - dedicated system-status page
 - `/debug`
-  - redirects to the event log / raw telemetry area inside `/dashboard`
+  - dedicated debug page
+- `/unlock`
+  - dedicated unlock page
 
 Why this structure was chosen:
 
-- it keeps the current dashboard intact
-- it gives users a clear `Home` page instead of forcing URL guessing
-- it exposes stable URLs now, even before the UI is split into more standalone pages later
+- it keeps the current dashboard working
+- it gives users a real `Home` page
+- it removes the old requirement to jump to anchors inside the dashboard for manual, task, status, and debug work
+- it keeps route names stable for future expansion
 
 ## What Is Real Vs Placeholder
 
@@ -72,23 +80,28 @@ Real standalone pages today:
 
 - `/`
 - `/dashboard`
+- `/telemetry`
+- `/manual`
+- `/tasks`
+- `/status`
+- `/debug`
 - `/unlock`
 
-Real existing feature areas inside `/dashboard`:
+Real implemented controls today:
 
-- telemetry
-- task selection placeholder
-- interrupt / resume demo controls
-- manual control
-- arm control
-- event log
-- raw telemetry / debug
+- manual chassis control
+- PWM adjustment
+- arm lift / gripper control
+- unlock page
+- live telemetry display
+- raw debug display
+- interrupt/resume demo controls
 
-Reserved or placeholder behavior:
+Still placeholder / reserved:
 
 - task selection is still a UI/API placeholder
-- the task-selection routes do not start a real proposal mission state machine yet
-- the new section-entry URLs such as `/manual` or `/tasks` are redirects into the current dashboard, not separate pages yet
+- task-selection routes do not start the final proposal mission runtime yet
+- the dedicated task page is structurally real, but the mission state behind it is still mock / placeholder
 
 ## Paired Arduino Sketches
 
@@ -102,7 +115,7 @@ Interrupt / resume demo sketch:
 
 Important behavior:
 
-- the dashboard still works with the legacy manual sketch
+- the UI still works with the legacy manual sketch
 - interrupt / resume buttons stay unavailable until Arduino telemetry includes `mode_protocol_version`
 - the task-selection module is separate from the current interrupt/resume demo and does not start the real task runtime yet
 
@@ -134,67 +147,78 @@ Important rule:
 
 ## Home Page
 
-The new `Home` page is the unified UI entry.
+The `Home` page is the unified UI entry.
 
 What it does:
 
 - presents the whole UI as one navigation system
 - shows current bridge, robot, mode, auto-stage, and task-selection snapshot
-- links to all major feature areas
+- links to all major feature pages
 - avoids forcing users to edit URLs manually
 
 What it does not do:
 
-- it does not replace the combined dashboard
-- it does not add a new frontend framework
-- it does not change the current control logic
+- it does not replace existing page logic
+- it does not add a frontend framework
+- it does not change the current control APIs
 
-## Dashboard Controls
+## Split Pages
 
-The `/dashboard` page includes:
+### Telemetry
 
-- a `Task Selection` placeholder module
-  - `Full Mission`
-  - `Obstacle Mission`
-  - `Pickup Mission`
-  - `Delivery Mission`
-  - `Manual Test`
-- placeholder task actions
-  - `Start Task`
-  - `Stop Task / Cancel`
-  - `Resume Task`
-- placeholder task fields
-  - `Selected Task`
-  - `Task Description`
-  - `Task Status`
-  - `Current Stage`
-  - `Resume Available`
-  - `Last Saved Stage`
-  - `Obstacle Interrupt`
-  - `Obstacle Hook`
-- interrupt / resume demo buttons
-  - `Start Auto Task`
-  - `Take Manual Control`
-  - `Return To Auto / Resume Task`
-  - `Cancel Resume / Abort Task`
-- dashboard navigation links back to:
-  - `Home`
-  - `Telemetry`
-  - `Manual`
-  - `Tasks`
-  - `Arm`
-  - `Status / Debug`
-  - `Unlock`
+- route: `/telemetry`
+- current implementation: serves the existing combined dashboard page
+- purpose: preserve the live telemetry view
 
-Manual control gating:
+### Manual + Arm
 
-- if the interrupt/resume protocol is active, drive and arm commands are blocked until `MANUAL_OVERRIDE` is entered
-- if the old manual-only sketch is connected, the dashboard keeps legacy direct manual behavior
-- if manual mode no longer holds a saved task, `Start Auto Task` becomes available again and starts a fresh auto run
+- route: `/manual`
+- arm alias route: `/arm`
+- purpose: dedicated page for:
+  - manual override buttons
+  - drive pad
+  - PWM control
+  - arm lift and gripper control
+
+### Task Selection
+
+- route: `/tasks`
+- purpose: dedicated page for:
+  - placeholder task presets
+  - placeholder task state
+  - interrupt/resume demo controls
+
+### System Status
+
+- route: `/status`
+- purpose: dedicated read-only status page for:
+  - run mode
+  - bridge health
+  - sensors
+  - actuators
+  - task placeholder snapshot
+
+### Debug
+
+- route: `/debug`
+- purpose: dedicated debug page for:
+  - recent event log
+  - raw telemetry JSON
+  - raw task-selection JSON
+
+## Original Combined Dashboard
+
+The original `/dashboard` page is still available.
+
+It now acts as a compatibility page:
+
+- it still exposes the full combined UI
+- it still contains task selection, manual controls, arm controls, and debug blocks
+- new navigation now prefers the split pages instead of routing users into dashboard anchors
 
 ## Task Selection Placeholder
 
-The task-selection block is intentionally separate from the current interrupt/resume demo.
+The task-selection model is intentionally separate from the current interrupt/resume demo.
 
 It only reserves UI and HTTP contracts for the future proposal task runtime.
 
@@ -205,11 +229,21 @@ What it does now:
 - exposes `start / stop / resume` buttons for UI validation
 - keeps a mock `savedStage` / `resumeAvailable` flow so the resume UI can be tested before the backend exists
 
+Current placeholder alignment decisions:
+
+- `FULL_MISSION`, `PICKUP_MISSION`, and `DELIVERY_MISSION` are the frozen task names for the proposal path
+- placeholder entry stages now mirror the planned mission vocabulary:
+  - `TRAVEL_TO_PICKUP`
+  - `TRAVEL_TO_DELIVERY`
+  - `OBSTACLE_MONITOR`
+- RFID is the primary station-verification method
+- QR + fixed password unlock is part of the final delivery flow
+
 What it does not do yet:
 
 - it does not start the current Arduino auto demo
-- it does not send serial task commands
-- it does not own the real Jetson or Arduino task state machine
+- it does not send final proposal task commands
+- it does not own the real Jetson or Arduino mission state machine
 
 Current placeholder state model:
 
@@ -226,21 +260,6 @@ Current placeholder state model:
 }
 ```
 
-Frontend helper functions are exposed on `window.taskSelectionApi`:
-
-- `selectTask(taskId)`
-- `startSelectedTask()`
-- `stopSelectedTask()`
-- `resumeSelectedTask()`
-- `getTaskSelectionState()`
-- `loadTaskSelectionState()`
-- `updateTaskStageDisplay(stage)`
-- `setTaskSelectionStatus(status, message)`
-- `markObstacleInterruptActive(active)`
-- `markResumeAvailable(resumeAvailable, savedStage)`
-
-These helpers currently operate on placeholder state only, but their names and payload shapes are meant to survive the later backend wiring step.
-
 ## HTTP APIs
 
 Existing APIs:
@@ -248,6 +267,8 @@ Existing APIs:
 - `POST /api/control`
 - `POST /api/arm`
 - `POST /api/unlock`
+
+`POST /api/unlock` accepts either `{"action": "OPEN", "password": "3848"}` or `{"action": "CLOSE"}`.
 
 Interrupt / resume demo APIs:
 
@@ -290,28 +311,9 @@ Examples:
 ```json
 {
   "selectedTask": "FULL_MISSION",
-  "source": "dashboard-task-selection"
+  "source": "tasks-page"
 }
 ```
-
-`POST /api/task-selection/mock-update`
-
-```json
-{
-  "taskStatus": "RUNNING_PLACEHOLDER",
-  "currentStage": "RFID_PICKUP_WAIT",
-  "savedStage": "CORRIDOR_DRIVE",
-  "resumeAvailable": true,
-  "obstacleInterruptActive": false,
-  "source": "future-runtime"
-}
-```
-
-Why `mock-update` exists:
-
-- it gives the UI a stable future hook for runtime-to-dashboard sync
-- it is still placeholder-only today
-- later the Jetson task manager can call this route or replace its implementation directly inside `server.py`
 
 ## Serial Protocol
 
@@ -409,6 +411,11 @@ Local access:
 
 - Home: `http://127.0.0.1:8080/`
 - Dashboard: `http://127.0.0.1:8080/dashboard`
+- Telemetry: `http://127.0.0.1:8080/telemetry`
+- Manual + Arm: `http://127.0.0.1:8080/manual`
+- Tasks: `http://127.0.0.1:8080/tasks`
+- Status: `http://127.0.0.1:8080/status`
+- Debug: `http://127.0.0.1:8080/debug`
 - Unlock: `http://127.0.0.1:8080/unlock`
 
 If phone access to `/unlock` is needed, expose the service explicitly:
@@ -432,12 +439,13 @@ python3 server.py --mock --http-port 8080
 
 In mock mode:
 
-- the dashboard still receives live updates
+- the UI still receives live updates
 - the home page still shows a live snapshot
-- the task-selection placeholder module also keeps its state in memory
+- the task-selection placeholder module still keeps its state in memory
 - interrupt / resume controls are visible and enabled
 - manual control gating behaves like the real interrupt/resume protocol
-- `OPEN_DOOR` still triggers the simulated unlock state
+- `OPEN_DOOR` opens the simulated cargo door and starts the configured auto-close timer
+- `CLOSE_DOOR` closes the simulated cargo door immediately
 
 Mock mode is still only for UI / API validation.
 

@@ -3,5 +3,7 @@
   "unlock_mode": "fixed",
   "fixed_password": "3848",
   "door_command": "OPEN_DOOR",
+  "close_door_command": "CLOSE_DOOR",
+  "door_auto_close_ms": 60000,
   "unlock_cooldown_ms": 5000
 }
