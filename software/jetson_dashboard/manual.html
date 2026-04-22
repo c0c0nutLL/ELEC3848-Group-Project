@@ -136,7 +136,7 @@
       <div>
         <div class="label">Manual Workspace</div>
         <h1>AMR Manual And Arm Control</h1>
-        <p class="sub">This page combines chassis manual control and two-servo arm control. It keeps the current Jetson <-> Arduino interaction path and still respects manual-override gating when the interrupt/resume demo is active. On LAN devices, `/manual` is protected by a password gate before this page is shown.</p>
+        <p class="sub">This page combines chassis manual control and two-servo arm control. It respects Arduino-owned manual-override gating when the integrated mission runtime is active. On LAN devices, `/manual` is protected by a password gate before this page is shown.</p>
       </div>
       <div class="hero-links">
         <a class="mini" href="/">Home</a>
@@ -186,7 +186,7 @@
             </div>
             <div class="task-note" style="margin-top:14px">
               <strong id="mode-feedback-title">Mode Feedback</strong>
-              <div id="mode-feedback" class="sub">Waiting for interrupt/resume telemetry.</div>
+        <div id="mode-feedback" class="sub">Waiting for mission-runtime telemetry.</div>
             </div>
           </section>
 
@@ -561,7 +561,7 @@
 
       if (!protocolReady) {
         modeFeedbackTitle.textContent = "Mode Feedback";
-        modeFeedback.textContent = "Interrupt/resume protocol unavailable. Flash interrupt_resume_demo.ino to enable task-level manual takeover.";
+        modeFeedback.textContent = "Mission-runtime protocol unavailable. Flash final_integrated_firmware.ino to enable task and override control.";
         return;
       }
 

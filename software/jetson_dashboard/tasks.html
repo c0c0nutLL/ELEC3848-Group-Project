@@ -133,7 +133,7 @@
       <div>
         <div class="label">Task Coordination</div>
         <h1>AMR Task Selection</h1>
-        <p class="sub">This page is the dedicated task-selection workspace. It keeps the current placeholder task model and the existing interrupt/resume demo controls, but no longer relies on a dashboard anchor entry.</p>
+        <p class="sub">This page is the dedicated task-selection workspace. Jetson forwards real task and override commands to Arduino, and the status cards follow live Arduino telemetry.</p>
       </div>
       <div class="hero-links">
         <a class="mini" href="/">Home</a>
@@ -151,7 +151,7 @@
         <div>
           <div class="label">Runtime State</div>
           <h2>Task Runtime Snapshot</h2>
-          <p class="sub">These values come from the existing Jetson state and interrupt/resume demo telemetry.</p>
+          <p class="sub">These values come from Arduino mission-runtime telemetry mirrored through the Jetson serial bridge.</p>
         </div>
       </div>
       <div class="cards">
@@ -169,7 +169,7 @@
         <div>
           <div class="label">Task Selection</div>
           <h2>Mission Presets And Task Controls</h2>
-          <p class="sub">This is the dedicated page for choosing task type, reserving task state, and driving the current start / manual-takeover / resume flow.</p>
+          <p class="sub">Choose a real task, send `TASK START` to Arduino, and manage manual override, resume, and abort around the live mission runtime.</p>
         </div>
       </div>
 
@@ -188,7 +188,7 @@
               <p id="task-selected-label" class="sub">--</p>
             </div>
             <div class="task-badge-row">
-              <span id="task-backend-chip" class="task-chip">UI Placeholder</span>
+              <span id="task-backend-chip" class="task-chip">Bridge Waiting</span>
               <span id="task-manual-chip" class="task-chip">Auto Task</span>
             </div>
           </div>
@@ -197,7 +197,7 @@
           <p id="task-description" class="hint">Waiting for task catalog.</p>
 
           <div class="cards" style="margin-top:14px">
-            <div class="card"><div class="label">Task Status</div><div id="task-placeholder-status" class="value small">--</div></div>
+            <div class="card"><div class="label">Task Status</div><div id="task-runtime-status" class="value small">--</div></div>
             <div class="card"><div class="label">Current Stage</div><div id="task-current-stage" class="value small">--</div></div>
             <div class="card"><div class="label">Resume Available</div><div id="task-resume-available" class="value">--</div></div>
             <div class="card"><div class="label">Last Saved Stage</div><div id="task-saved-stage" class="value small">--</div></div>
@@ -213,14 +213,14 @@
 
           <div class="task-note" style="margin-top:14px">
             <strong id="task-selection-feedback-title">Task Selection Feedback</strong>
-            <div id="task-selection-feedback" class="sub">This module is UI/API placeholder only. It does not yet launch the real Jetson or Arduino task runtime.</div>
+            <div id="task-selection-feedback" class="sub">Select a task and Jetson will queue a real serial command for the Arduino mission runtime.</div>
           </div>
         </div>
       </div>
 
-      <div class="label" style="margin-top:18px">Interrupt / Resume Demo</div>
+      <div class="label" style="margin-top:18px">Run-Mode Controls</div>
       <div class="mode-actions" style="margin-top:8px">
-        <button id="start-task" class="btn primary" type="button">Start Auto Task</button>
+        <button id="start-task" class="btn primary" type="button">Start Selected Task</button>
         <button id="take-manual" class="btn" type="button">Take Manual Control</button>
         <button id="resume-task" class="btn primary" type="button">Return To Auto / Resume Task</button>
         <button id="abort-task" class="btn warn" type="button">Cancel Resume / Abort Task</button>
@@ -228,18 +228,17 @@
 
       <div class="task-note" style="margin-top:14px">
         <strong id="mode-feedback-title">Mode Feedback</strong>
-        <div id="mode-feedback" class="sub">Waiting for interrupt/resume telemetry.</div>
+        <div id="mode-feedback" class="sub">Waiting for mission-runtime telemetry.</div>
       </div>
     </section>
   </div>
 
   <script>
     const fallbackTaskCatalog = [
-      {id: "FULL_MISSION", label: "Full Mission", name_zh: "Full Mission", summary: "Pickup + delivery main flow.", description: "Travel to pickup RFID, verify pickup, load cargo, turn around, then travel to delivery RFID and wait for QR + fixed-password unlock. After the door opens, the same page button becomes a close-door button, the 60-second close timer starts immediately, and manual close takes priority.", placeholder_entry_stage: "TRAVEL_TO_PICKUP", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
-      {id: "OBSTACLE_MISSION", label: "Obstacle Mission", name_zh: "Obstacle Mission", summary: "Obstacle interrupt path placeholder.", description: "Reserved for obstacle-only testing and future mission interrupt routing when YOLO detects a person or object and the distance threshold is also met.", placeholder_entry_stage: "OBSTACLE_MONITOR", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
-      {id: "PICKUP_MISSION", label: "Pickup Mission", name_zh: "Pickup Mission", summary: "Pickup half of full mission.", description: "Travel to the pickup RFID station, verify pickup, run the pickup sequence, open the cargo door for loading, place the item, and close the door.", placeholder_entry_stage: "TRAVEL_TO_PICKUP", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
-      {id: "DELIVERY_MISSION", label: "Delivery Mission", name_zh: "Delivery Mission", summary: "Delivery half of full mission.", description: "Travel to the delivery RFID station, verify delivery, wait for QR + fixed-password unlock, then turn the UI button into a close-door button and apply the immediate 60-second close timer after the door opens.", placeholder_entry_stage: "TRAVEL_TO_DELIVERY", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
-      {id: "MANUAL_TEST", label: "Manual Test", name_zh: "Manual Test", summary: "No auto mission, manual control only.", description: "Reserved for UI-driven manual testing.", placeholder_entry_stage: "MANUAL_TEST_ONLY", supports_resume: false, is_manual_test: true, obstacle_interrupt_enabled: false}
+      {id: "FULL_MISSION", label: "Full Mission", name_zh: "Full Mission", summary: "Pickup + delivery mission runtime.", description: "Run the full business flow on Arduino: start, travel to pickup, verify RFID, complete pickup and load, turn around, travel to delivery, verify RFID, wait for Jetson unlock approval, unload, close the cargo door, and report status.", entry_stage: "START", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
+      {id: "PICKUP_MISSION", label: "Pickup Mission", name_zh: "Pickup Mission", summary: "Pickup-side half mission.", description: "Run the pickup-side business flow on Arduino: start, travel to pickup, verify pickup RFID, perform the pickup sequence, open the door for load, load cargo, and close the door.", entry_stage: "START", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
+      {id: "DELIVERY_MISSION", label: "Delivery Mission", name_zh: "Delivery Mission", summary: "Delivery-side half mission.", description: "Run the delivery-side business flow on Arduino: start, travel to delivery, verify delivery RFID, wait for Jetson unlock approval, open the cargo door, wait for close, auto-close if needed, and report status.", entry_stage: "START", supports_resume: true, is_manual_test: false, obstacle_interrupt_enabled: true},
+      {id: "MANUAL_TEST", label: "Manual Test", name_zh: "Manual Test", summary: "Manual override only.", description: "Request Arduino manual mode without starting an autonomous mission so chassis, arm, and door functions can be tested directly from the dashboard.", entry_stage: "IDLE", supports_resume: false, is_manual_test: true, obstacle_interrupt_enabled: false}
     ];
 
     const liveText = document.getElementById("live-text");
@@ -253,7 +252,7 @@
     const taskSelectedName = document.getElementById("task-selected-name");
     const taskSelectedLabel = document.getElementById("task-selected-label");
     const taskDescription = document.getElementById("task-description");
-    const taskPlaceholderStatus = document.getElementById("task-placeholder-status");
+    const taskRuntimeStatus = document.getElementById("task-runtime-status");
     const taskCurrentStage = document.getElementById("task-current-stage");
     const taskResumeAvailable = document.getElementById("task-resume-available");
     const taskSavedStage = document.getElementById("task-saved-stage");
@@ -271,7 +270,7 @@
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
     let taskSelectionConfig = {
-      backend_binding: "placeholder_only",
+      backend_binding: "arduino_telemetry",
       api_paths: {
         state: "/api/task-selection/state",
         select: "/api/task-selection/select",
@@ -332,12 +331,12 @@
         isObstacleInterruptEnabled: Boolean(task.obstacle_interrupt_enabled),
         obstacleInterruptActive: false,
         supportsResume: task.supports_resume !== false,
-        placeholderEntryStage: task.placeholder_entry_stage || "NONE",
+        entryStage: task.entry_stage || "NONE",
         backendConnected: false,
-        backendBinding: "placeholder_only",
-        statusSource: "MOCK_UI_ONLY",
+        backendBinding: "arduino_telemetry",
+        statusSource: "LOCAL_FALLBACK",
         lastAction: "INIT",
-        lastMessage: "Task selection placeholder is ready. No backend runtime is connected yet."
+        lastMessage: "Task selection is bound to Arduino telemetry. Start sends TASK START <TASK_ID>."
       };
       Object.assign(state, overrides || {});
       state.selectedTask = task.id;
@@ -348,7 +347,7 @@
       state.isManualTest = Boolean(task.is_manual_test);
       state.isObstacleInterruptEnabled = Boolean(task.obstacle_interrupt_enabled);
       state.supportsResume = task.supports_resume !== false;
-      state.placeholderEntryStage = task.placeholder_entry_stage || "NONE";
+      state.entryStage = task.entry_stage || "NONE";
       state.taskStatus = String(state.taskStatus || "IDLE").toUpperCase();
       state.currentStage = String(state.currentStage || "NONE").toUpperCase();
       state.savedStage = state.savedStage ? String(state.savedStage).toUpperCase() : null;
@@ -361,8 +360,8 @@
       }
       state.obstacleInterruptActive = Boolean(state.obstacleInterruptActive);
       state.backendConnected = Boolean(state.backendConnected);
-      state.backendBinding = String(state.backendBinding || "placeholder_only");
-      state.statusSource = String(state.statusSource || "MOCK_UI_ONLY");
+      state.backendBinding = String(state.backendBinding || "arduino_telemetry");
+      state.statusSource = String(state.statusSource || "LOCAL_FALLBACK");
       state.lastAction = String(state.lastAction || "INIT").toUpperCase();
       state.lastMessage = String(state.lastMessage || "");
       return state;
@@ -396,13 +395,13 @@
 
     function syncTaskSelectionButtons() {
       const hasSelection = Boolean(taskSelectionState.selectedTask);
-      const hasActivePlaceholder =
+      const hasActiveTaskState =
         taskSelectionState.taskStatus !== "IDLE" ||
         taskSelectionState.currentStage !== "NONE" ||
         taskSelectionState.resumeAvailable;
 
       taskSelectStartButton.disabled = !hasSelection;
-      taskSelectStopButton.disabled = !hasSelection || !hasActivePlaceholder;
+      taskSelectStopButton.disabled = !hasSelection || !hasActiveTaskState;
       taskSelectResumeButton.disabled = !taskSelectionState.supportsResume || !taskSelectionState.resumeAvailable;
     }
 
@@ -414,18 +413,18 @@
       taskSelectedName.textContent = taskSelectionState.selectedTaskName || "--";
       taskSelectedLabel.textContent = taskSelectionState.selectedTaskLabel || "--";
       taskDescription.textContent = taskSelectionState.taskDescription || "--";
-      taskPlaceholderStatus.textContent = taskSelectionState.taskStatus || "--";
+      taskRuntimeStatus.textContent = taskSelectionState.taskStatus || "--";
       taskCurrentStage.textContent = taskSelectionState.currentStage || "--";
       taskResumeAvailable.textContent = yesNo(taskSelectionState.resumeAvailable);
       taskSavedStage.textContent = taskSelectionState.savedStage || "--";
       taskObstacleInterrupt.textContent = yesNo(taskSelectionState.obstacleInterruptActive);
       taskObstacleEnabled.textContent = yesNo(taskSelectionState.isObstacleInterruptEnabled);
-      taskBackendChip.textContent = taskSelectionState.backendConnected ? "Backend Connected" : "UI Placeholder";
-      taskBackendChip.classList.toggle("active", !taskSelectionState.backendConnected);
+      taskBackendChip.textContent = taskSelectionState.backendConnected ? "Arduino Telemetry" : "Bridge Waiting";
+      taskBackendChip.classList.toggle("active", taskSelectionState.backendConnected);
       taskManualChip.textContent = taskSelectionState.isManualTest ? "Manual Test" : "Auto Task";
       taskManualChip.classList.toggle("active", taskSelectionState.isManualTest);
       taskSelectionFeedbackTitle.textContent = "Task Selection Feedback";
-      taskSelectionFeedback.textContent = taskSelectionState.lastMessage || "Task selection placeholder ready.";
+      taskSelectionFeedback.textContent = taskSelectionState.lastMessage || "Waiting for Arduino task telemetry.";
 
       renderTaskOptions();
       syncTaskSelectionButtons();
@@ -458,7 +457,7 @@
 
       if (!protocolReady) {
         modeFeedbackTitle.textContent = "Mode Feedback";
-        modeFeedback.textContent = "Interrupt/resume protocol unavailable. Flash interrupt_resume_demo.ino to enable task-level manual takeover.";
+        modeFeedback.textContent = "Mission-runtime protocol unavailable. Flash final_integrated_firmware.ino to enable task and override control.";
         return;
       }
 

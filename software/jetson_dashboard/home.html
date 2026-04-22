@@ -153,7 +153,7 @@
         <div>
           <div class="label">System Snapshot</div>
           <h2>Current System Status</h2>
-          <p class="sub">This page reuses the existing Jetson APIs and shows the current bridge, mode, and task-selection placeholder state.</p>
+          <p class="sub">This page reuses the existing Jetson APIs and shows the current bridge, mode, and Arduino-backed task state.</p>
         </div>
         <div class="pill"><span id="status-updated">Waiting for status</span></div>
       </div>
@@ -234,7 +234,7 @@
         routeKey: "tasks",
         type: "Standalone Page",
         state: "Live",
-        description: "Open the dedicated task-selection page and the current interrupt/resume task controls."
+        description: "Open the dedicated task-selection page and the live mission-runtime override controls."
       },
       {
         title: "Arm Control",
@@ -248,7 +248,7 @@
         routeKey: "status",
         type: "Standalone Page",
         state: "Live",
-        description: "Open the dedicated system-status page for run mode, bridge health, sensors, actuators, and task placeholder state."
+        description: "Open the dedicated system-status page for run mode, bridge health, sensors, actuators, and Arduino task state."
       },
       {
         title: "Debug",

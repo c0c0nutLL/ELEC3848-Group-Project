@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AMR Manual Access</title>
+  <title>AMR Protected Access</title>
   <style>
     :root {
       --bg: #efe8dc;
@@ -113,12 +113,12 @@
 </head>
 <body>
   <div class="panel">
-    <h1>Manual Access</h1>
-    <p class="sub">Enter the manual-control password to unlock the LAN control page for this device.</p>
+    <h1>Protected Access</h1>
+    <p class="sub">Enter the LAN control password to unlock protected control pages on this device, including manual control and task selection.</p>
 
     <label for="password">Password</label>
-    <input id="password" type="password" placeholder="Enter manual-control password" autocomplete="current-password">
-    <button id="submit-btn" type="button">Enter Manual Control</button>
+    <input id="password" type="password" placeholder="Enter LAN control password" autocomplete="current-password">
+    <button id="submit-btn" type="button">Continue</button>
 
     <div id="result" class="result">Waiting for password input.</div>
 
@@ -140,6 +140,7 @@
 
     async function submitPassword() {
       const password = passwordInput.value;
+      const targetPath = window.location.pathname && window.location.pathname !== "/" ? window.location.pathname : "/manual";
       if (!password) {
         setResult("Password cannot be empty.", true);
         return;
@@ -154,7 +155,7 @@
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ password }),
+          body: JSON.stringify({ password, redirect: targetPath }),
         });
 
         const payload = await response.json();
@@ -163,8 +164,8 @@
           return;
         }
 
-        setResult("Password accepted. Opening manual control...");
-        window.location.href = payload.redirect || "/manual";
+        setResult("Password accepted. Opening protected page...");
+        window.location.href = payload.redirect || targetPath;
       } catch (error) {
         setResult(`Login request failed: ${error}`, true);
       } finally {

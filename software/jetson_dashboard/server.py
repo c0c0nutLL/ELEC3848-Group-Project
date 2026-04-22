@@ -57,15 +57,15 @@ TASK_SELECTION_TASKS = {
             "becomes a close-door button, the 60-second close timer starts immediately, and manual close "
             "takes priority."
         ),
-        "default_stage": "TRAVEL_TO_PICKUP",
+        "default_stage": "START",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
     },
-    "OBSTACLE_MISSION": {
+    "_HISTORICAL_OBSTACLE_MISSION": {
         "label": "Obstacle Mission",
         "name_zh": "避障任务",
-        "summary": "Obstacle interrupt path placeholder.",
+        "summary": "Historical obstacle-only path.",
         "description": (
             "Run obstacle detection and avoidance as a standalone validation path. "
             "In the final system this also acts as an interrupt path when YOLO detects a person or object "
@@ -84,7 +84,7 @@ TASK_SELECTION_TASKS = {
             "Run the pickup-side flow only: travel to the pickup RFID station, verify pickup, run the pickup sequence, "
             "open the cargo door for loading, place the item, and close the door."
         ),
-        "default_stage": "TRAVEL_TO_PICKUP",
+        "default_stage": "START",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
@@ -98,7 +98,7 @@ TASK_SELECTION_TASKS = {
             "wait for QR + fixed-password unlock, then switch the UI button into a close-door button and start the "
             "60-second close timer immediately after the door opens. Manual close has priority over auto-close."
         ),
-        "default_stage": "TRAVEL_TO_DELIVERY",
+        "default_stage": "START",
         "supports_resume": True,
         "is_manual_test": False,
         "obstacle_interrupt_enabled": True,
@@ -106,17 +106,26 @@ TASK_SELECTION_TASKS = {
     "MANUAL_TEST": {
         "label": "Manual Test",
         "name_zh": "人工测试",
-        "summary": "UI-only manual chassis and arm operation.",
+        "summary": "Manual chassis and arm operation with Arduino as the source of truth.",
         "description": (
-            "Do not run an automatic mission. Only allow manual drive and arm operations from the dashboard."
+            "Do not run an automatic mission. Enter manual override on Arduino so manual drive and arm operations "
+            "can be issued from the dashboard without a second task state machine on Jetson."
         ),
-        "default_stage": "MANUAL_TEST_ONLY",
+        "default_stage": "IDLE",
         "supports_resume": False,
         "is_manual_test": True,
         "obstacle_interrupt_enabled": False,
     },
 }
-TASK_SELECTION_STATUS_VALUES = ("IDLE", "START_REQUESTED", "STOPPED", "RESUME_REQUESTED")
+TASK_SELECTION_STATUS_VALUES = (
+    "IDLE",
+    "AUTO_ACTIVE",
+    "MANUAL_OVERRIDE",
+    "MANUAL_TEST_ACTIVE",
+    "DONE",
+    "FAULT",
+    "BRIDGE_OFFLINE",
+)
 TASK_SELECTION_STATE_FIELDS = [
     "selectedTask",
     "selectedTaskLabel",
@@ -131,15 +140,23 @@ TASK_SELECTION_STATE_FIELDS = [
     "isObstacleInterruptEnabled",
     "obstacleInterruptActive",
     "supportsResume",
-    "placeholderEntryStage",
+    "entryStage",
     "backendConnected",
     "backendBinding",
     "statusSource",
+    "selectedTaskFromTelemetry",
     "lastAction",
     "lastMessage",
     "lastUpdatedMs",
 ]
 DEFAULT_TASK_SELECTION_TASK = "FULL_MISSION"
+CANONICAL_TASK_SELECTION_TASKS = (
+    "FULL_MISSION",
+    "PICKUP_MISSION",
+    "DELIVERY_MISSION",
+    "MANUAL_TEST",
+)
+TASK_SELECTION_BACKEND_BINDING = "arduino_telemetry"
 DEFAULT_DRIVE_POWER = 96
 MIN_DRIVE_POWER = 40
 MAX_DRIVE_POWER = 100
@@ -152,7 +169,7 @@ ARM_ACTIVE_WINDOW_MS = 1200
 MOCK_UNLOCK_OPEN_MS = 60000
 MOCK_DISTANCE_MIN_CM = 8.0
 MOCK_DISTANCE_MAX_CM = 150.0
-MODE_PROTOCOL_VERSION = "interrupt-resume-v1"
+MODE_PROTOCOL_VERSION = "mission-runtime-v1"
 RUN_MODE_AUTO = "AUTO"
 RUN_MODE_MANUAL_OVERRIDE = "MANUAL_OVERRIDE"
 RUN_MODE_FAULT = "FAULT"
@@ -197,7 +214,7 @@ mock_sensor_state = {
     "right_cm": 92.0,
     "left_cm": 89.0,
 }  # type: Dict[str, float]
-task_selection_state = {}  # type: Dict[str, Any]
+task_selection_runtime = {}  # type: Dict[str, Any]
 manual_access_sessions = {}  # type: Dict[str, Dict[str, Any]]
 
 
@@ -345,14 +362,15 @@ def normalize_task_action(raw_action: Any) -> str:
 
 def normalize_task_selection_id(raw_task: Any) -> str:
     task_id = str(raw_task or "").strip().upper()
-    if task_id not in TASK_SELECTION_TASKS:
-        raise ValueError(f"selectedTask must be one of {list(TASK_SELECTION_TASKS.keys())}")
+    if task_id not in CANONICAL_TASK_SELECTION_TASKS:
+        raise ValueError(f"selectedTask must be one of {list(CANONICAL_TASK_SELECTION_TASKS)}")
     return task_id
 
 
 def build_task_selection_catalog() -> List[Dict[str, Any]]:
     catalog = []
-    for task_id, definition in TASK_SELECTION_TASKS.items():
+    for task_id in CANONICAL_TASK_SELECTION_TASKS:
+        definition = TASK_SELECTION_TASKS[task_id]
         catalog.append(
             {
                 "id": task_id,
@@ -360,7 +378,7 @@ def build_task_selection_catalog() -> List[Dict[str, Any]]:
                 "name_zh": definition["label"],
                 "summary": definition["summary"],
                 "description": definition["description"],
-                "placeholder_entry_stage": definition["default_stage"],
+                "entry_stage": definition["default_stage"],
                 "supports_resume": bool(definition["supports_resume"]),
                 "is_manual_test": bool(definition["is_manual_test"]),
                 "obstacle_interrupt_enabled": bool(definition["obstacle_interrupt_enabled"]),
@@ -369,95 +387,161 @@ def build_task_selection_catalog() -> List[Dict[str, Any]]:
     return catalog
 
 
-def build_task_selection_state(
-    selected_task: Optional[str] = None,
-    overrides: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    task_id = selected_task or DEFAULT_TASK_SELECTION_TASK
-    if task_id not in TASK_SELECTION_TASKS:
-        task_id = DEFAULT_TASK_SELECTION_TASK
+def build_task_selection_runtime() -> Dict[str, Any]:
+    return {
+        "selectedTaskHint": DEFAULT_TASK_SELECTION_TASK,
+        "lastStartedTask": "",
+        "lastAction": "INIT",
+        "lastMessage": "Task selection is bound to Arduino telemetry. Start sends TASK START <TASK_ID> to the robot runtime.",
+        "lastClient": "",
+        "lastSource": "server",
+        "lastUpdatedMs": current_time_ms(),
+    }
 
-    definition = TASK_SELECTION_TASKS[task_id]
-    state = {
-        "selectedTask": task_id,
+
+def get_task_selection_runtime() -> Dict[str, Any]:
+    with task_selection_lock:
+        if not task_selection_runtime:
+            task_selection_runtime.update(build_task_selection_runtime())
+        return dict(task_selection_runtime)
+
+
+def patch_task_selection_runtime(patch: Dict[str, Any]) -> Dict[str, Any]:
+    with task_selection_lock:
+        if not task_selection_runtime:
+            task_selection_runtime.update(build_task_selection_runtime())
+        task_selection_runtime.update(patch)
+        task_selection_runtime["lastUpdatedMs"] = current_time_ms()
+        return dict(task_selection_runtime)
+
+
+def normalize_stage_name(raw_stage: Any) -> str:
+    stage = str(raw_stage or "").strip().upper()
+    if stage in {"", "NONE"}:
+        return ""
+    return stage
+
+
+def telemetry_selected_task(raw_task: Any) -> str:
+    task_id = str(raw_task or "").strip().upper()
+    if task_id in CANONICAL_TASK_SELECTION_TASKS:
+        return task_id
+    return ""
+
+
+def resolve_selected_task(snapshot: Dict[str, Any], runtime: Dict[str, Any]) -> Tuple[str, bool, str]:
+    telemetry_task = telemetry_selected_task(snapshot.get("selected_task"))
+    if telemetry_task:
+        return telemetry_task, True, "ARDUINO_TELEMETRY"
+
+    stage = normalize_stage_name(snapshot.get("current_auto_stage"))
+    task_context_active = bool(snapshot.get("task_active")) or bool(snapshot.get("resume_pending")) or stage in {"START", "DONE", "FAULT"}
+    if task_context_active:
+        started_task = telemetry_selected_task(runtime.get("lastStartedTask"))
+        if started_task:
+            return started_task, False, "JETSON_LAST_COMMAND"
+
+    selected_hint = telemetry_selected_task(runtime.get("selectedTaskHint"))
+    if selected_hint:
+        return selected_hint, False, "JETSON_SELECTION"
+
+    return DEFAULT_TASK_SELECTION_TASK, False, "JETSON_SELECTION"
+
+
+def derive_task_selection_status(snapshot: Dict[str, Any], task_id: str, definition: Dict[str, Any]) -> str:
+    connected = bridge_mode == "mock" or str(snapshot.get("bridge_status", "") or "") == "CONNECTED"
+    mode = current_mode(snapshot)
+    stage = normalize_stage_name(snapshot.get("current_auto_stage"))
+    saved_stage = normalize_stage_name(snapshot.get("saved_auto_stage"))
+    task_active = bool(snapshot.get("task_active"))
+    resume_pending = bool(snapshot.get("resume_pending"))
+    fault = bool(snapshot.get("fault_latched")) or mode == RUN_MODE_FAULT or stage == "FAULT"
+
+    if not connected:
+        return "BRIDGE_OFFLINE"
+    if fault:
+        return "FAULT"
+    if task_id == "MANUAL_TEST" and mode == RUN_MODE_MANUAL_OVERRIDE and task_active:
+        return "MANUAL_TEST_ACTIVE"
+    if mode == RUN_MODE_MANUAL_OVERRIDE and (task_active or resume_pending or bool(saved_stage)):
+        return "MANUAL_OVERRIDE"
+    if stage == "DONE":
+        return "DONE"
+    if task_active or stage not in {"", "IDLE"}:
+        return "AUTO_ACTIVE"
+    return "IDLE"
+
+
+def derive_task_selection_message(
+    status: str,
+    task_id: str,
+    current_stage: str,
+    snapshot: Dict[str, Any],
+    runtime: Dict[str, Any],
+) -> str:
+    if status == "BRIDGE_OFFLINE":
+        return "Serial bridge is offline. Task state will update again once Arduino telemetry resumes."
+    if status == "FAULT":
+        fault_text = str(snapshot.get("fault", "") or "").strip()
+        return fault_text or "Arduino reports a latched fault. Resume is blocked until the task is aborted or restarted."
+    if status == "AUTO_ACTIVE":
+        return "Arduino owns the active mission runtime."
+    if status == "MANUAL_OVERRIDE":
+        saved_stage = normalize_stage_name(snapshot.get("saved_auto_stage"))
+        if saved_stage:
+            return f"Manual override is active. Resume checkpoint: {saved_stage}."
+        return "Manual override is active on Arduino."
+    if status == "MANUAL_TEST_ACTIVE":
+        return "Manual test is active on Arduino. Direct drive and arm commands are gated by MANUAL_OVERRIDE."
+    if status == "DONE":
+        return f"{task_id} finished on Arduino. Select another task or start again."
+    return str(runtime.get("lastMessage", "") or f"{task_id} selected. Start sends TASK START {task_id}.")
+
+
+def get_task_selection_state() -> Dict[str, Any]:
+    runtime = get_task_selection_runtime()
+    snapshot = get_state_snapshot()
+    selected_task, selected_from_telemetry, status_source = resolve_selected_task(snapshot, runtime)
+    definition = TASK_SELECTION_TASKS[selected_task]
+    task_status = derive_task_selection_status(snapshot, selected_task, definition)
+    current_stage = normalize_stage_name(snapshot.get("current_auto_stage"))
+    if current_stage == "IDLE" and task_status == "IDLE":
+        current_stage = ""
+
+    saved_stage = normalize_stage_name(snapshot.get("saved_auto_stage")) or None
+    resume_available = (
+        bool(definition["supports_resume"])
+        and bool(snapshot.get("resume_pending"))
+        and bool(saved_stage)
+        and not bool(snapshot.get("fault_latched"))
+        and current_mode(snapshot) != RUN_MODE_FAULT
+    )
+    backend_connected = bridge_mode == "mock" or str(snapshot.get("bridge_status", "") or "") == "CONNECTED"
+    task_message = derive_task_selection_message(task_status, selected_task, current_stage, snapshot, runtime)
+
+    return {
+        "selectedTask": selected_task,
         "selectedTaskLabel": definition["label"],
         "selectedTaskName": definition["label"],
         "taskDescription": definition["description"],
         "taskSummary": definition["summary"],
-        "taskStatus": "IDLE",
-        "currentStage": "NONE",
-        "resumeAvailable": False,
-        "savedStage": None,
+        "taskStatus": task_status,
+        "currentStage": current_stage or "NONE",
+        "resumeAvailable": resume_available,
+        "savedStage": saved_stage,
         "isManualTest": bool(definition["is_manual_test"]),
         "isObstacleInterruptEnabled": bool(definition["obstacle_interrupt_enabled"]),
-        "obstacleInterruptActive": False,
+        "obstacleInterruptActive": bool(snapshot.get("obstacle_routine_active")),
         "supportsResume": bool(definition["supports_resume"]),
-        "placeholderEntryStage": definition["default_stage"],
-        "backendConnected": False,
-        "backendBinding": "placeholder_only",
-        "statusSource": "MOCK_UI_ONLY",
-        "lastAction": "INIT",
-        "lastMessage": "Task selection placeholder is ready. No Jetson/Arduino task runtime is connected yet.",
-    }  # type: Dict[str, Any]
-
-    if overrides:
-        state.update(overrides)
-
-    state["selectedTask"] = task_id
-    state["selectedTaskLabel"] = definition["label"]
-    state["selectedTaskName"] = definition["label"]
-    state["taskDescription"] = definition["description"]
-    state["taskSummary"] = definition["summary"]
-    state["isManualTest"] = bool(definition["is_manual_test"])
-    state["isObstacleInterruptEnabled"] = bool(definition["obstacle_interrupt_enabled"])
-    state["supportsResume"] = bool(definition["supports_resume"])
-    state["placeholderEntryStage"] = definition["default_stage"]
-
-    state["taskStatus"] = str(state.get("taskStatus", "IDLE") or "IDLE").strip().upper()
-    current_stage = str(state.get("currentStage", "NONE") or "NONE").strip().upper()
-    state["currentStage"] = current_stage if current_stage else "NONE"
-
-    saved_stage = state.get("savedStage")
-    if saved_stage is None:
-        normalized_saved_stage = None
-    else:
-        normalized_saved_stage = str(saved_stage).strip().upper() or None
-        if normalized_saved_stage == "NONE":
-            normalized_saved_stage = None
-
-    if not state["supportsResume"]:
-        normalized_saved_stage = None
-        state["resumeAvailable"] = False
-
-    state["savedStage"] = normalized_saved_stage
-    state["resumeAvailable"] = bool(state.get("resumeAvailable")) and bool(normalized_saved_stage)
-    state["obstacleInterruptActive"] = bool(state.get("obstacleInterruptActive", False))
-    state["backendConnected"] = bool(state.get("backendConnected", False))
-    state["backendBinding"] = str(state.get("backendBinding", "placeholder_only") or "placeholder_only")
-    state["statusSource"] = str(state.get("statusSource", "MOCK_UI_ONLY") or "MOCK_UI_ONLY")
-    state["lastAction"] = str(state.get("lastAction", "INIT") or "INIT").strip().upper()
-    state["lastMessage"] = str(state.get("lastMessage", "") or "")
-    state["lastUpdatedMs"] = current_time_ms()
-    return state
-
-
-def get_task_selection_state() -> Dict[str, Any]:
-    with task_selection_lock:
-        if not task_selection_state:
-            task_selection_state.update(build_task_selection_state())
-        return dict(task_selection_state)
-
-
-def patch_task_selection_state(patch: Dict[str, Any]) -> Dict[str, Any]:
-    with task_selection_lock:
-        base_state = dict(task_selection_state) if task_selection_state else build_task_selection_state()
-        merged_state = dict(base_state)
-        merged_state.update(patch)
-        next_task = str(merged_state.get("selectedTask", DEFAULT_TASK_SELECTION_TASK) or DEFAULT_TASK_SELECTION_TASK)
-        next_state = build_task_selection_state(next_task, merged_state)
-        task_selection_state.clear()
-        task_selection_state.update(next_state)
-        return dict(task_selection_state)
+        "entryStage": definition["default_stage"],
+        "backendConnected": backend_connected,
+        "backendBinding": TASK_SELECTION_BACKEND_BINDING if backend_connected else "serial_bridge_wait",
+        "statusSource": status_source,
+        "selectedTaskFromTelemetry": selected_from_telemetry,
+        "lastAction": str(runtime.get("lastAction", "INIT") or "INIT").strip().upper(),
+        "lastMessage": task_message,
+        "lastUpdatedMs": current_time_ms(),
+    }
 
 
 def get_state_snapshot() -> Dict[str, Any]:
@@ -517,7 +601,7 @@ def require_interrupt_resume_protocol(snapshot: Optional[Dict[str, Any]] = None)
         return True, ""
     return (
         False,
-        "current Arduino sketch does not expose interrupt/resume telemetry; flash firmware/arduino/proposal_amr/interrupt_resume_demo/interrupt_resume_demo.ino",
+        "current Arduino sketch does not expose mission runtime telemetry; flash firmware/arduino/proposal_amr/final_integrated_firmware/final_integrated_firmware.ino",
     )
 
 
@@ -678,6 +762,15 @@ def handle_serial_line(line: str) -> None:
         print("[serial] ignore non-object payload")
         return
 
+    selected_task = telemetry_selected_task(packet.get("selected_task"))
+    if selected_task:
+        patch_task_selection_runtime(
+            {
+                "selectedTaskHint": selected_task,
+                "lastStartedTask": selected_task,
+            }
+        )
+
     update_state(packet)
     print(
         "[serial] "
@@ -817,119 +910,10 @@ def trigger_task_action(
     except ValueError as exc:
         return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
 
-    snapshot = get_state_snapshot()
-    protocol_ok, protocol_message = require_interrupt_resume_protocol(snapshot)
-    if not protocol_ok:
-        return False, {"ok": False, "message": protocol_message}, HTTPStatus.CONFLICT
-
-    mode = current_mode(snapshot)
-    stage = current_auto_stage(snapshot)
-    saved_stage = saved_auto_stage(snapshot)
-    resume_flag = bool(snapshot.get("resume_pending"))
-    task_active = bool(snapshot.get("task_active"))
-
     if action == "START":
-        if mode == RUN_MODE_MANUAL_OVERRIDE and (task_active or resume_flag or bool(saved_stage)):
-            return (
-                False,
-                {
-                    "ok": False,
-                    "message": "manual override is holding a saved task; abort or resume before starting a new auto task",
-                },
-                HTTPStatus.CONFLICT,
-            )
+        return trigger_task_selection_start(client_ip, source=source)
 
-        if task_active and stage not in {"", "IDLE", "DONE", "FAULT"}:
-            return False, {"ok": False, "message": "an auto task is already running"}, HTTPStatus.CONFLICT
-
-        command = "TASK START"
-        queued, queue_message = queue_serial_command(command)
-        if not queued:
-            return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
-
-        patch_state(
-            {
-                "mode_protocol_version": MODE_PROTOCOL_VERSION,
-                "current_mode": RUN_MODE_AUTO,
-                "current_auto_stage": "START",
-                "saved_auto_stage": "",
-                "resume_pending": False,
-                "manual_session_active": False,
-                "task_active": True,
-                "fault_latched": False,
-                "resume_note": "No saved task",
-                "mode_message": "auto task start requested",
-                "task_message": "auto task start requested",
-                "task_last_client": client_ip,
-                "task_last_source": source,
-                "task_last_action": action,
-                "task_last_command": command,
-                "delivery_result": "AUTO_STARTING",
-                "target_station": "PROPOSAL_DEMO",
-                "fault": "",
-            },
-            add_history=True,
-        )
-
-        return (
-            True,
-            {
-                "ok": True,
-                "message": "auto task start requested",
-                "command": command,
-                "action": action,
-            },
-            HTTPStatus.OK,
-        )
-
-    if mode == RUN_MODE_MANUAL_OVERRIDE:
-        return (
-            False,
-            {
-                "ok": False,
-                "message": "manual override is active; use the manual abort action if you want to clear the saved task and stay in manual mode",
-            },
-            HTTPStatus.CONFLICT,
-        )
-
-    command = "TASK ABORT"
-    queued, queue_message = queue_serial_command(command)
-    if not queued:
-        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
-
-    patch_state(
-        {
-            "mode_protocol_version": MODE_PROTOCOL_VERSION,
-            "current_mode": RUN_MODE_AUTO,
-            "current_auto_stage": "IDLE",
-            "saved_auto_stage": "",
-            "resume_pending": False,
-            "manual_session_active": False,
-            "task_active": False,
-            "fault_latched": False,
-            "resume_note": "No saved task",
-            "mode_message": "auto task aborted",
-            "task_message": "auto task aborted",
-            "task_last_client": client_ip,
-            "task_last_source": source,
-            "task_last_action": action,
-            "task_last_command": command,
-            "delivery_result": "READY",
-            "fault": "",
-        },
-        add_history=True,
-    )
-
-    return (
-        True,
-        {
-            "ok": True,
-            "message": "auto task aborted",
-            "command": command,
-            "action": action,
-        },
-        HTTPStatus.OK,
-    )
+    return trigger_task_selection_stop(client_ip, source=source)
 
 
 def trigger_mode_action(
@@ -984,28 +968,29 @@ def trigger_mode_action(
         elif not resume_pending_value:
             message = "manual override requested; there is no resumable auto stage yet"
 
-        patch_state(
-            {
-                "mode_protocol_version": MODE_PROTOCOL_VERSION,
-                "current_mode": RUN_MODE_MANUAL_OVERRIDE,
-                "saved_auto_stage": guessed_saved_stage,
-                "resume_pending": resume_pending_value,
-                "manual_session_active": True,
-                "task_active": task_active or resume_pending_value,
-                "mode_message": message,
-                "mode_last_client": client_ip,
-                "mode_last_source": source,
-                "mode_last_action": action,
-                "mode_last_command": command,
-                "resume_note": "Resume from saved stage" if resume_pending_value else "No saved task",
-                "state": "MANUAL_OVERRIDE",
-                "delivery_result": "RESUME_PENDING" if resume_pending_value else "MANUAL_ONLY",
-                "control_direction": "STOP",
-                "control_status": "IDLE",
-                "fault": snapshot.get("fault", ""),
-            },
-            add_history=True,
-        )
+        if bridge_mode == "mock":
+            patch_state(
+                {
+                    "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                    "current_mode": RUN_MODE_MANUAL_OVERRIDE,
+                    "saved_auto_stage": guessed_saved_stage,
+                    "resume_pending": resume_pending_value,
+                    "manual_session_active": True,
+                    "task_active": task_active or resume_pending_value,
+                    "mode_message": message,
+                    "mode_last_client": client_ip,
+                    "mode_last_source": source,
+                    "mode_last_action": action,
+                    "mode_last_command": command,
+                    "resume_note": "Resume from saved stage" if resume_pending_value else "No saved task",
+                    "state": "MANUAL_OVERRIDE",
+                    "delivery_result": "RESUME_PENDING" if resume_pending_value else "MANUAL_ONLY",
+                    "control_direction": "STOP",
+                    "control_status": "IDLE",
+                    "fault": snapshot.get("fault", ""),
+                },
+                add_history=True,
+            )
 
         return (
             True,
@@ -1039,25 +1024,26 @@ def trigger_mode_action(
         if not queued:
             return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
 
-        patch_state(
-            {
-                "mode_protocol_version": MODE_PROTOCOL_VERSION,
-                "current_mode": RUN_MODE_AUTO,
-                "current_auto_stage": saved_stage,
-                "resume_pending": False,
-                "manual_session_active": False,
-                "task_active": True,
-                "mode_message": "resume requested",
-                "mode_last_client": client_ip,
-                "mode_last_source": source,
-                "mode_last_action": action,
-                "mode_last_command": command,
-                "resume_note": "Resume requested",
-                "state": saved_stage,
-                "delivery_result": "AUTO_RESUMING",
-            },
-            add_history=True,
-        )
+        if bridge_mode == "mock":
+            patch_state(
+                {
+                    "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                    "current_mode": RUN_MODE_AUTO,
+                    "current_auto_stage": saved_stage,
+                    "resume_pending": False,
+                    "manual_session_active": False,
+                    "task_active": True,
+                    "mode_message": "resume requested",
+                    "mode_last_client": client_ip,
+                    "mode_last_source": source,
+                    "mode_last_action": action,
+                    "mode_last_command": command,
+                    "resume_note": "Resume requested",
+                    "state": saved_stage,
+                    "delivery_result": "AUTO_RESUMING",
+                },
+                add_history=True,
+            )
 
         return (
             True,
@@ -1079,26 +1065,27 @@ def trigger_mode_action(
     if not queued:
         return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
 
-    patch_state(
-        {
-            "mode_protocol_version": MODE_PROTOCOL_VERSION,
-            "current_mode": RUN_MODE_MANUAL_OVERRIDE,
-            "current_auto_stage": "IDLE",
-            "saved_auto_stage": "",
-            "resume_pending": False,
-            "manual_session_active": True,
-            "task_active": False,
-            "mode_message": "saved task cleared; manual override remains active",
-            "mode_last_client": client_ip,
-            "mode_last_source": source,
-            "mode_last_action": action,
-            "mode_last_command": command,
-            "resume_note": "No saved task",
-            "state": "MANUAL_OVERRIDE",
-            "delivery_result": "MANUAL_ONLY",
-        },
-        add_history=True,
-    )
+    if bridge_mode == "mock":
+        patch_state(
+            {
+                "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                "current_mode": RUN_MODE_MANUAL_OVERRIDE,
+                "current_auto_stage": "IDLE",
+                "saved_auto_stage": "",
+                "resume_pending": False,
+                "manual_session_active": True,
+                "task_active": False,
+                "mode_message": "saved task cleared; manual override remains active",
+                "mode_last_client": client_ip,
+                "mode_last_source": source,
+                "mode_last_action": action,
+                "mode_last_command": command,
+                "resume_note": "No saved task",
+                "state": "MANUAL_OVERRIDE",
+                "delivery_result": "MANUAL_ONLY",
+            },
+            add_history=True,
+        )
 
     return (
         True,
@@ -1123,23 +1110,16 @@ def trigger_task_selection_select(
         return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
 
     definition = TASK_SELECTION_TASKS[task_id]
-    snapshot = patch_task_selection_state(
+    patch_task_selection_runtime(
         {
-            "selectedTask": task_id,
-            "taskStatus": "IDLE",
-            "currentStage": "NONE",
-            "resumeAvailable": False,
-            "savedStage": None,
-            "obstacleInterruptActive": False,
+            "selectedTaskHint": task_id,
             "lastAction": "SELECT",
             "lastClient": client_ip,
             "lastSource": source,
-            "lastMessage": (
-                f"{definition['label']} selected. This is a UI placeholder only; "
-                "the real Jetson/Arduino task runtime is not wired yet."
-            ),
+            "lastMessage": f"{definition['label']} selected. Start will send TASK START {task_id}.",
         }
     )
+    snapshot = get_task_selection_state()
     return (
         True,
         {
@@ -1155,36 +1135,79 @@ def trigger_task_selection_start(
     client_ip: str,
     source: str = "dashboard",
 ) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
-    snapshot = get_task_selection_state()
-    task_id = str(snapshot.get("selectedTask", DEFAULT_TASK_SELECTION_TASK))
-    definition = TASK_SELECTION_TASKS.get(task_id, TASK_SELECTION_TASKS[DEFAULT_TASK_SELECTION_TASK])
+    snapshot = get_state_snapshot()
+    protocol_ok, protocol_message = require_interrupt_resume_protocol(snapshot)
+    if not protocol_ok:
+        return False, {"ok": False, "message": protocol_message}, HTTPStatus.CONFLICT
 
-    placeholder_stage = str(definition["default_stage"])
-    if bool(definition["is_manual_test"]):
-        placeholder_stage = "MANUAL_TEST_ONLY"
+    runtime = get_task_selection_runtime()
+    task_id = telemetry_selected_task(runtime.get("selectedTaskHint")) or DEFAULT_TASK_SELECTION_TASK
+    definition = TASK_SELECTION_TASKS[task_id]
+    mode = current_mode(snapshot)
+    stage = normalize_stage_name(snapshot.get("current_auto_stage"))
+    saved_stage = normalize_stage_name(snapshot.get("saved_auto_stage"))
+    task_active = bool(snapshot.get("task_active"))
+    resume_flag = bool(snapshot.get("resume_pending"))
 
-    next_state = patch_task_selection_state(
+    if mode == RUN_MODE_MANUAL_OVERRIDE and (task_active or resume_flag or bool(saved_stage)):
+        return (
+            False,
+            {
+                "ok": False,
+                "message": "manual override is holding a saved task; abort or resume before starting a new task",
+            },
+            HTTPStatus.CONFLICT,
+        )
+
+    if task_active and stage not in {"", "IDLE", "DONE", "FAULT"}:
+        return False, {"ok": False, "message": "an Arduino task is already running"}, HTTPStatus.CONFLICT
+
+    command = f"TASK START {task_id}"
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    patch_task_selection_runtime(
         {
-            "selectedTask": task_id,
-            "taskStatus": "START_REQUESTED",
-            "currentStage": placeholder_stage,
-            "resumeAvailable": False,
-            "savedStage": None,
-            "obstacleInterruptActive": False,
+            "selectedTaskHint": task_id,
+            "lastStartedTask": task_id,
             "lastAction": "START",
             "lastClient": client_ip,
             "lastSource": source,
-            "lastMessage": (
-                f"Start requested for {definition['label']}. Placeholder only; "
-                "no real task state machine is attached to this API yet."
-            ),
+            "lastMessage": f"Queued {command}. Waiting for Arduino telemetry.",
         }
     )
+
+    if bridge_mode == "mock":
+        patch_state(
+            {
+                "mode_protocol_version": MODE_PROTOCOL_VERSION,
+                "selected_task": task_id,
+                "current_mode": RUN_MODE_MANUAL_OVERRIDE if bool(definition["is_manual_test"]) else RUN_MODE_AUTO,
+                "current_auto_stage": "IDLE" if bool(definition["is_manual_test"]) else "START",
+                "saved_auto_stage": "",
+                "resume_pending": False,
+                "manual_session_active": bool(definition["is_manual_test"]),
+                "task_active": True,
+                "fault_latched": False,
+                "resume_note": "No saved task",
+                "status_note": "",
+                "pickup_rfid_matched": False,
+                "delivery_rfid_matched": False,
+                "obstacle_routine_active": False,
+                "obstacle_routine_step": -1,
+                "fault": "",
+            },
+            add_history=True,
+        )
+
+    next_state = get_task_selection_state()
     return (
         True,
         {
             "ok": True,
-            "message": next_state["lastMessage"],
+            "message": f"{definition['label']} start requested",
+            "command": command,
             "state": next_state,
         },
         HTTPStatus.OK,
@@ -1195,39 +1218,55 @@ def trigger_task_selection_stop(
     client_ip: str,
     source: str = "dashboard",
 ) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
-    snapshot = get_task_selection_state()
-    task_id = str(snapshot.get("selectedTask", DEFAULT_TASK_SELECTION_TASK))
-    definition = TASK_SELECTION_TASKS.get(task_id, TASK_SELECTION_TASKS[DEFAULT_TASK_SELECTION_TASK])
-    current_stage = str(snapshot.get("currentStage", "NONE") or "NONE").strip().upper()
-    can_resume = bool(definition["supports_resume"]) and current_stage not in {"", "NONE"}
-    saved_stage = current_stage if can_resume else None
+    snapshot = get_state_snapshot()
+    protocol_ok, protocol_message = require_interrupt_resume_protocol(snapshot)
+    if not protocol_ok:
+        return False, {"ok": False, "message": protocol_message}, HTTPStatus.CONFLICT
 
-    next_state = patch_task_selection_state(
+    task_state = get_task_selection_state()
+    task_id = str(task_state.get("selectedTask", DEFAULT_TASK_SELECTION_TASK))
+    command = "TASK ABORT"
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    patch_task_selection_runtime(
         {
-            "selectedTask": task_id,
-            "taskStatus": "STOPPED",
-            "currentStage": "NONE",
-            "resumeAvailable": can_resume,
-            "savedStage": saved_stage,
-            "obstacleInterruptActive": False,
+            "selectedTaskHint": task_id,
             "lastAction": "STOP",
             "lastClient": client_ip,
             "lastSource": source,
-            "lastMessage": (
-                f"Stop requested for {definition['label']}. "
-                + (
-                    f"Saved placeholder stage: {saved_stage}."
-                    if saved_stage
-                    else "No resumable placeholder stage is available."
-                )
-            ),
+            "lastMessage": f"Queued {command}. Waiting for Arduino telemetry.",
         }
     )
+
+    if bridge_mode == "mock":
+        patch_state(
+            {
+                "selected_task": "",
+                "current_mode": RUN_MODE_AUTO,
+                "current_auto_stage": "IDLE",
+                "saved_auto_stage": "",
+                "resume_pending": False,
+                "manual_session_active": False,
+                "task_active": False,
+                "fault_latched": False,
+                "resume_note": "No saved task",
+                "status_note": "",
+                "obstacle_routine_active": False,
+                "obstacle_routine_step": -1,
+                "fault": "",
+            },
+            add_history=True,
+        )
+
+    next_state = get_task_selection_state()
     return (
         True,
         {
             "ok": True,
-            "message": next_state["lastMessage"],
+            "message": "task abort requested",
+            "command": command,
             "state": next_state,
         },
         HTTPStatus.OK,
@@ -1243,7 +1282,7 @@ def trigger_task_selection_resume(
     if not bool(snapshot.get("supportsResume")):
         return (
             False,
-            {"ok": False, "message": "the selected task does not expose resume in the current placeholder design"},
+            {"ok": False, "message": "the selected task does not expose resume"},
             HTTPStatus.CONFLICT,
         )
 
@@ -1251,33 +1290,48 @@ def trigger_task_selection_resume(
     if not saved_stage or not bool(snapshot.get("resumeAvailable")):
         return (
             False,
-            {"ok": False, "message": "no placeholder saved stage is available for resume"},
+            {"ok": False, "message": "no saved Arduino stage is available for resume"},
             HTTPStatus.CONFLICT,
         )
 
-    definition = TASK_SELECTION_TASKS.get(task_id, TASK_SELECTION_TASKS[DEFAULT_TASK_SELECTION_TASK])
-    next_state = patch_task_selection_state(
+    command = "OVERRIDE RESUME"
+    queued, queue_message = queue_serial_command(command)
+    if not queued:
+        return False, {"ok": False, "message": queue_message}, HTTPStatus.SERVICE_UNAVAILABLE
+
+    patch_task_selection_runtime(
         {
-            "selectedTask": task_id,
-            "taskStatus": "RESUME_REQUESTED",
-            "currentStage": saved_stage,
-            "resumeAvailable": False,
-            "savedStage": saved_stage,
-            "obstacleInterruptActive": False,
+            "selectedTaskHint": task_id,
+            "lastStartedTask": task_id,
             "lastAction": "RESUME",
             "lastClient": client_ip,
             "lastSource": source,
-            "lastMessage": (
-                f"Resume requested for {definition['label']} from placeholder stage {saved_stage}. "
-                "This remains UI-only until the runtime is connected."
-            ),
+            "lastMessage": f"Queued {command}. Waiting for Arduino telemetry.",
         }
     )
+
+    if bridge_mode == "mock":
+        patch_state(
+            {
+                "selected_task": task_id,
+                "current_mode": RUN_MODE_AUTO,
+                "current_auto_stage": saved_stage,
+                "saved_auto_stage": "",
+                "resume_pending": False,
+                "manual_session_active": False,
+                "task_active": True,
+                "resume_note": "No saved task",
+            },
+            add_history=True,
+        )
+
+    next_state = get_task_selection_state()
     return (
         True,
         {
             "ok": True,
-            "message": next_state["lastMessage"],
+            "message": f"resume requested from {saved_stage}",
+            "command": command,
             "state": next_state,
         },
         HTTPStatus.OK,
@@ -1289,55 +1343,60 @@ def trigger_task_selection_mock_update(
     client_ip: str,
     source: str = "dashboard",
 ) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
-    patch = {}  # type: Dict[str, Any]
+    if bridge_mode != "mock":
+        return (
+            False,
+            {"ok": False, "message": "mock task-selection updates are disabled while Arduino telemetry is authoritative"},
+            HTTPStatus.CONFLICT,
+        )
+
+    runtime_patch = {}  # type: Dict[str, Any]
+    state_patch = {}  # type: Dict[str, Any]
 
     if "selectedTask" in data:
         try:
-            patch["selectedTask"] = normalize_task_selection_id(data.get("selectedTask"))
+            task_id = normalize_task_selection_id(data.get("selectedTask"))
         except ValueError as exc:
             return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
-
-    if "taskStatus" in data:
-        task_status = str(data.get("taskStatus", "") or "").strip().upper()
-        if not task_status:
-            return False, {"ok": False, "message": "taskStatus cannot be empty"}, HTTPStatus.BAD_REQUEST
-        patch["taskStatus"] = task_status
+        runtime_patch["selectedTaskHint"] = task_id
+        state_patch["selected_task"] = task_id
 
     if "currentStage" in data:
-        patch["currentStage"] = str(data.get("currentStage", "NONE") or "NONE").strip().upper() or "NONE"
+        stage = str(data.get("currentStage", "NONE") or "NONE").strip().upper() or "NONE"
+        state_patch["current_auto_stage"] = "IDLE" if stage == "NONE" else stage
 
     if "savedStage" in data:
         raw_saved_stage = data.get("savedStage")
         if raw_saved_stage in (None, "", "NONE"):
-            patch["savedStage"] = None
+            state_patch["saved_auto_stage"] = ""
         else:
-            patch["savedStage"] = str(raw_saved_stage).strip().upper()
+            state_patch["saved_auto_stage"] = str(raw_saved_stage).strip().upper()
 
     if "resumeAvailable" in data:
-        patch["resumeAvailable"] = bool(data.get("resumeAvailable"))
+        state_patch["resume_pending"] = bool(data.get("resumeAvailable"))
 
     if "obstacleInterruptActive" in data:
-        patch["obstacleInterruptActive"] = bool(data.get("obstacleInterruptActive"))
+        state_patch["obstacle_routine_active"] = bool(data.get("obstacleInterruptActive"))
 
     if "lastMessage" in data:
-        patch["lastMessage"] = str(data.get("lastMessage", "") or "")
+        runtime_patch["lastMessage"] = str(data.get("lastMessage", "") or "")
 
-    if not patch:
+    if not runtime_patch and not state_patch:
         return False, {"ok": False, "message": "no mock task-selection fields were provided"}, HTTPStatus.BAD_REQUEST
 
-    patch["statusSource"] = "MOCK_UI_ONLY"
-    patch["backendConnected"] = False
-    patch["backendBinding"] = "placeholder_only"
-    patch["lastAction"] = str(data.get("action", "MOCK_UPDATE") or "MOCK_UPDATE").strip().upper()
-    patch["lastClient"] = client_ip
-    patch["lastSource"] = source
+    runtime_patch["lastAction"] = str(data.get("action", "MOCK_UPDATE") or "MOCK_UPDATE").strip().upper()
+    runtime_patch["lastClient"] = client_ip
+    runtime_patch["lastSource"] = source
+    patch_task_selection_runtime(runtime_patch)
+    if state_patch:
+        patch_state(state_patch, add_history=True)
 
-    next_state = patch_task_selection_state(patch)
+    next_state = get_task_selection_state()
     return (
         True,
         {
             "ok": True,
-            "message": next_state["lastMessage"] or "task selection placeholder updated",
+            "message": next_state["lastMessage"] or "task selection mock state updated",
             "state": next_state,
         },
         HTTPStatus.OK,
@@ -1443,12 +1502,17 @@ def mock_reader_loop() -> None:
         current_mode_name = str(snapshot.get("current_mode", RUN_MODE_AUTO) or RUN_MODE_AUTO)
         current_stage_name = str(snapshot.get("current_auto_stage", "IDLE") or "IDLE")
         saved_stage_name = str(snapshot.get("saved_auto_stage", "") or "")
+        selected_task_name = telemetry_selected_task(snapshot.get("selected_task"))
         target_station_name = str(snapshot.get("target_station", "MANUAL") or "MANUAL")
         resume_pending_value = bool(snapshot.get("resume_pending", False))
         task_active_value = bool(snapshot.get("task_active", False))
         manual_session_active_value = bool(snapshot.get("manual_session_active", current_mode_name == RUN_MODE_MANUAL_OVERRIDE))
         fault_latched_value = bool(snapshot.get("fault_latched", False))
         resume_note_value = str(snapshot.get("resume_note", "No saved task") or "No saved task")
+        pickup_rfid_matched_value = bool(snapshot.get("pickup_rfid_matched", False))
+        delivery_rfid_matched_value = bool(snapshot.get("delivery_rfid_matched", False))
+        obstacle_routine_active_value = bool(snapshot.get("obstacle_routine_active", False))
+        obstacle_routine_step_value = int(snapshot.get("obstacle_routine_step", -1) or -1)
 
         state = current_stage_name if current_stage_name else "IDLE"
         delivery_result = "READY"
@@ -1475,6 +1539,10 @@ def mock_reader_loop() -> None:
             "heading_deg": 0.0,
             "rfid_tag": "",
             "rfid_match": False,
+            "selected_task": selected_task_name,
+            "pickup_rfid_matched": pickup_rfid_matched_value,
+            "delivery_rfid_matched": delivery_rfid_matched_value,
+            "last_rfid_station": snapshot.get("last_rfid_station", "NONE"),
             "cargo_door": cargo_door,
             "fault": "",
             "bridge_mode": "mock",
@@ -1489,6 +1557,11 @@ def mock_reader_loop() -> None:
             "task_active": task_active_value,
             "fault_latched": fault_latched_value,
             "resume_note": resume_note_value,
+            "status_note": str(snapshot.get("status_note", "") or ""),
+            "obstacle_routine_active": obstacle_routine_active_value,
+            "obstacle_routine_step": obstacle_routine_step_value,
+            "red_led": bool(snapshot.get("red_led", False)),
+            "green_led": bool(snapshot.get("green_led", current_stage_name == "WAIT_USER_UNLOCK")),
             "control_direction": direction,
             "motor_pwm": power,
             "control_status": control_status,
@@ -1705,7 +1778,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/tasks":
-            self.serve_file(TASKS_HTML)
+            client_ip = self.client_address[0] if self.client_address else "unknown"
+            self.serve_file(TASKS_HTML if self.manual_access_allowed(client_ip) else MANUAL_ACCESS_HTML)
             return
 
         if parsed.path == "/status":
@@ -1924,7 +1998,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "session_ttl_ms": MANUAL_ACCESS_SESSION_TTL_MS,
             },
             "task_selection": {
-                "backend_binding": "placeholder_only",
+                "backend_binding": TASK_SELECTION_BACKEND_BINDING,
                 "api_paths": {
                     "state": "/api/task-selection/state",
                     "select": "/api/task-selection/select",
@@ -1936,16 +2010,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "tasks": build_task_selection_catalog(),
                 "status_values": list(TASK_SELECTION_STATUS_VALUES),
                 "state_fields": list(TASK_SELECTION_STATE_FIELDS),
-                "loopback_only_for_post": True,
+                "loopback_only_for_post": False,
+                "requires_lan_password": True,
                 "notes": [
-                    "This is a UI/task-interface placeholder only.",
-                    "No real Jetson/Arduino task runtime is attached yet.",
-                    "mock_update is reserved for future runtime-to-UI state sync.",
+                    "Task selection is backed by Arduino telemetry.",
+                    "Start sends TASK START <TASK_ID> over USB serial and Arduino owns the mission state machine.",
+                    "mock_update remains available only in --mock mode for UI validation.",
                 ],
             },
             "interrupt_resume": {
                 "protocol_version": MODE_PROTOCOL_VERSION,
-                "paired_sketch": "firmware/arduino/proposal_amr/interrupt_resume_demo/interrupt_resume_demo.ino",
+                "paired_sketch": "firmware/arduino/proposal_amr/final_integrated_firmware/final_integrated_firmware.ino",
                 "required_state_fields": [
                     "current_mode",
                     "current_auto_stage",
@@ -2005,6 +2080,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         client_ip = self.client_address[0] if self.client_address else "unknown"
         password = str(data.get("password", ""))
+        redirect = str(data.get("redirect", "/manual") or "/manual").strip()
+        if not redirect.startswith("/") or redirect.startswith("//"):
+            redirect = "/manual"
         if password != MANUAL_ACCESS_PASSWORD:
             self.send_json(
                 {"ok": False, "message": "wrong manual-control password"},
@@ -2017,7 +2095,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "message": "manual access granted",
-                "redirect": "/manual",
+                "redirect": redirect,
             },
             HTTPStatus.OK,
             extra_headers=[("Set-Cookie", self.manual_access_cookie_header(session_token))],
@@ -2123,11 +2201,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_task_selection_select_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "task selection is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "task selection"):
             return
 
         try:
@@ -2143,11 +2217,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_task_selection_start_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "task selection start is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "task selection start"):
             return
 
         try:
@@ -2162,11 +2232,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_task_selection_stop_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "task selection stop is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "task selection stop"):
             return
 
         try:
@@ -2181,11 +2247,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_task_selection_resume_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "task selection resume is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "task selection resume"):
             return
 
         try:
@@ -2200,11 +2262,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_task_selection_mock_update_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "task selection mock update is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "task selection mock update"):
             return
 
         try:
@@ -2262,10 +2320,11 @@ def main() -> None:
                 "task_active": False,
                 "fault_latched": False,
                 "resume_note": "No saved task",
+                "selected_task": "",
             }
         )
     patch_state(initial_state)
-    patch_task_selection_state({})
+    patch_task_selection_runtime({})
 
     worker = threading.Thread(
         target=mock_reader_loop if args.mock else serial_reader_loop,

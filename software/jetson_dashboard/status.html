@@ -81,7 +81,7 @@
       <div>
         <div class="label">System View</div>
         <h1>AMR System Status</h1>
-        <p class="sub">Dedicated live status page for run mode, task stage, bridge health, sensors, actuators, and current task-selection placeholder state.</p>
+        <p class="sub">Dedicated live status page for run mode, task stage, bridge health, sensors, actuators, and Arduino-backed task state.</p>
       </div>
       <div class="hero-links">
         <a class="mini" href="/">Home</a>
@@ -156,9 +156,9 @@
     <section class="panel">
       <div class="panel-head">
         <div>
-          <div class="label">Task Placeholder</div>
+          <div class="label">Task Runtime</div>
           <h2>Task Selection Snapshot</h2>
-          <p class="sub">This section follows the reserved task-selection state that will later connect to the real mission runtime.</p>
+          <p class="sub">This section is backed by the latest Arduino task telemetry and Jetson bridge state.</p>
         </div>
       </div>
       <div class="cards">
