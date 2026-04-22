@@ -74,7 +74,9 @@ enum DriveDirection {
   DRIVE_FORWARD,
   DRIVE_BACKWARD,
   DRIVE_LEFT,
-  DRIVE_RIGHT
+  DRIVE_RIGHT,
+  DRIVE_TURN_LEFT,
+  DRIVE_TURN_RIGHT
 };
 
 enum MotorIndex {
@@ -99,7 +101,9 @@ const int8_t DRIVE_SIGN[][MOTOR_COUNT] = {
   {1, -1, 1, -1},
   {-1, 1, -1, 1},
   {-1, -1, 1, 1},
-  {1, 1, -1, -1}
+  {1, 1, -1, -1},
+  {-1, -1, -1, -1},
+  {1, 1, 1, 1}
 };
 
 // 四轮基础 trim 用来补偿底盘天然偏航，动态 heading hold 只做小幅修正。
@@ -108,7 +112,9 @@ const DirectionTrim DEFAULT_DIRECTION_TRIM[] = {
   {{8, 0, 8, 0}},
   {{8, 0, 8, 0}},
   {{0, 2, 0, 0}},
-  {{0, 2, 0, 0}}
+  {{0, 2, 0, 0}},
+  {{0, 0, 0, 0}},
+  {{0, 0, 0, 0}}
 };
 
 unsigned long lastTelemetryMs = 0;
@@ -416,13 +422,20 @@ void captureHeadingTarget() {
   headingTargetDeg = headingDeg;
 }
 
+bool usesHeadingHold(DriveDirection direction) {
+  return direction == DRIVE_FORWARD ||
+         direction == DRIVE_BACKWARD ||
+         direction == DRIVE_LEFT ||
+         direction == DRIVE_RIGHT;
+}
+
 void driveCurrentDirection() {
   if (currentDirection == DRIVE_STOP || motorPwm <= 0) {
     stopCar();
     return;
   }
 
-  int correctionPwm = computeHeadingCorrectionPwm();
+  int correctionPwm = usesHeadingHold(currentDirection) ? computeHeadingCorrectionPwm() : 0;
   lastHeadingCorrectionPwm = correctionPwm;
   const DirectionTrim &trim = DEFAULT_DIRECTION_TRIM[currentDirection];
 
@@ -450,6 +463,14 @@ DriveDirection parseDirection(const char *token, bool *ok) {
     *ok = true;
     return DRIVE_RIGHT;
   }
+  if (strcmp(token, "TURN_LEFT") == 0) {
+    *ok = true;
+    return DRIVE_TURN_LEFT;
+  }
+  if (strcmp(token, "TURN_RIGHT") == 0) {
+    *ok = true;
+    return DRIVE_TURN_RIGHT;
+  }
   if (strcmp(token, "STOP") == 0) {
     *ok = true;
     return DRIVE_STOP;
@@ -469,6 +490,10 @@ const char *directionName(DriveDirection direction) {
       return "LEFT";
     case DRIVE_RIGHT:
       return "RIGHT";
+    case DRIVE_TURN_LEFT:
+      return "TURN_LEFT";
+    case DRIVE_TURN_RIGHT:
+      return "TURN_RIGHT";
     case DRIVE_STOP:
     default:
       return "STOP";
@@ -492,6 +517,10 @@ const char *stateName() {
       return "MANUAL_LEFT";
     case DRIVE_RIGHT:
       return "MANUAL_RIGHT";
+    case DRIVE_TURN_LEFT:
+      return "MANUAL_TURN_LEFT";
+    case DRIVE_TURN_RIGHT:
+      return "MANUAL_TURN_RIGHT";
     case DRIVE_STOP:
     default:
       return "IDLE";
@@ -542,8 +571,8 @@ void applyDriveCommand(DriveDirection direction, int requestedPwm) {
   commandTimedOut = false;
   clearFault();
 
-  if (currentDirection != DRIVE_STOP &&
-      (previousDirection == DRIVE_STOP || previousDirection != currentDirection)) {
+  if (usesHeadingHold(currentDirection) &&
+      (previousDirection == DRIVE_STOP || previousDirection != currentDirection || !usesHeadingHold(previousDirection))) {
     captureHeadingTarget();
   }
 
@@ -834,6 +863,8 @@ void printHelp() {
   Serial.println(F("  DRIVE BACKWARD <0-255>"));
   Serial.println(F("  DRIVE LEFT <0-255>"));
   Serial.println(F("  DRIVE RIGHT <0-255>"));
+  Serial.println(F("  DRIVE TURN_LEFT <0-255>"));
+  Serial.println(F("  DRIVE TURN_RIGHT <0-255>"));
   Serial.println(F("  DRIVE STOP <0-255>"));
   Serial.println(F("  ARM LIFT <0-180>"));
   Serial.println(F("  ARM GRIP <0-180>"));

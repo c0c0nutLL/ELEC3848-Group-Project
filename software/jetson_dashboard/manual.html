@@ -97,6 +97,7 @@
     .drive.stop{grid-area:stop;background:#fff3ed;color:var(--warn)}
     .drive.right{grid-area:right}
     .drive.down{grid-area:down}
+    .turn-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}
     .drive.active{background:rgba(32,106,93,.12);border-color:rgba(32,106,93,.45)}
     .stop-wide{
       width:100%;
@@ -201,11 +202,15 @@
                   <button class="drive right" type="button" data-direction="RIGHT">Right</button>
                   <button class="drive down" type="button" data-direction="BACKWARD">Backward</button>
                 </div>
+                <div class="turn-row">
+                  <button class="drive" type="button" data-direction="TURN_LEFT">Turn Left (Q)</button>
+                  <button class="drive" type="button" data-direction="TURN_RIGHT">Turn Right (E)</button>
+                </div>
                 <button id="emergency-stop" class="stop-wide" type="button">Emergency Stop</button>
               </div>
               <div>
                 <p id="control-feedback" class="hint">Hold a direction button to move. Release to stop.</p>
-                <p class="hint">Keyboard: `W A S D` or arrow keys. Space sends `STOP` immediately while manual control is enabled.</p>
+                <p class="hint">Keyboard: `W A S D` or arrow keys for translation, `Q / E` for in-place turn, and Space for `STOP`.</p>
               </div>
             </div>
           </section>
@@ -277,6 +282,10 @@
       ArrowDown: "BACKWARD",
       ArrowLeft: "LEFT",
       ArrowRight: "RIGHT",
+      q: "TURN_LEFT",
+      Q: "TURN_LEFT",
+      e: "TURN_RIGHT",
+      E: "TURN_RIGHT",
       w: "FORWARD",
       W: "FORWARD",
       s: "BACKWARD",
@@ -321,6 +330,7 @@
     const POWER_SYNC_DEBOUNCE_MS = 120;
     const pendingLocalState = {
       motorPwm: {value: null, ts: 0},
+      controlDirection: {value: null, ts: 0},
       armLiftDeg: {value: null, ts: 0},
       armGripDeg: {value: null, ts: 0}
     };
@@ -331,7 +341,7 @@
 
     function allowedDirection(direction) {
       const upper = String(direction || "STOP").toUpperCase();
-      return ["STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT"].includes(upper) ? upper : "STOP";
+      return ["STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT", "TURN_LEFT", "TURN_RIGHT"].includes(upper) ? upper : "STOP";
     }
 
     function pendingEntryActive(entry) {
@@ -359,6 +369,10 @@
           packet.motor_pwm === pendingLocalState.motorPwm.value) {
         clearPendingValue("motorPwm");
       }
+      if (typeof packet.control_direction === "string" && pendingEntryActive(pendingLocalState.controlDirection) &&
+          packet.control_direction.toUpperCase() === pendingLocalState.controlDirection.value) {
+        clearPendingValue("controlDirection");
+      }
       if (typeof packet.arm_lift_deg === "number" && pendingEntryActive(pendingLocalState.armLiftDeg) &&
           packet.arm_lift_deg === pendingLocalState.armLiftDeg.value) {
         clearPendingValue("armLiftDeg");
@@ -374,6 +388,9 @@
       const merged = {...(packet || {})};
       if (pendingEntryActive(pendingLocalState.motorPwm)) {
         merged.motor_pwm = pendingLocalState.motorPwm.value;
+      }
+      if (pendingEntryActive(pendingLocalState.controlDirection)) {
+        merged.control_direction = pendingLocalState.controlDirection.value;
       }
       if (pendingEntryActive(pendingLocalState.armLiftDeg)) {
         merged.arm_lift_deg = pendingLocalState.armLiftDeg.value;
@@ -555,10 +572,14 @@
         return;
       }
       const power = Number(powerSlider.value);
-      const payload = {direction: allowedDirection(direction), power, source: options.source || "manual-page"};
+      const normalizedDirection = allowedDirection(direction);
+      const payload = {direction: normalizedDirection, power, source: options.source || "manual-page"};
+      clearPowerSyncTimer();
       setPendingValue("motorPwm", power);
+      setPendingValue("controlDirection", normalizedDirection);
       await postJson(controlConfig.api_path || "/api/control", payload, options.silent ? null : controlFeedback).catch(() => {
         clearPendingValue("motorPwm");
+        clearPendingValue("controlDirection");
         render(lastPacket);
       });
     }
@@ -613,7 +634,7 @@
       if (pressedDirection) {
         return pressedDirection;
       }
-      return allowedDirection(lastPacket.control_direction || "STOP");
+      return allowedDirection(packetWithPendingValues(lastPacket).control_direction || "STOP");
     }
 
     function schedulePowerSync() {
@@ -628,10 +649,12 @@
     }
 
     function releaseDrive(options = {}) {
+      clearPowerSyncTimer();
       if (!pressedDirection && options.skipCommand) return;
       pressedDirection = null;
       clearRepeat();
       syncDriveButtons("STOP");
+      setPendingValue("controlDirection", "STOP");
       if (!options.skipCommand) {
         void sendControl("STOP", {source: options.source || "manual-page"});
       }
@@ -639,6 +662,7 @@
 
     function beginDrive(direction) {
       if (!manualControlsEnabled(lastPacket)) return;
+      clearPowerSyncTimer();
       if (!direction || direction === "STOP") {
         releaseDrive();
         return;
