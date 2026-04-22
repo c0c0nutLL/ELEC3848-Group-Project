@@ -40,6 +40,7 @@ const uint8_t FRONT_ULTRASONIC_RIGHT_TRIG_PIN = 6;
 const uint8_t FRONT_ULTRASONIC_RIGHT_ECHO_PIN = 4;
 const uint8_t FRONT_ULTRASONIC_LEFT_TRIG_PIN = 10;
 const uint8_t FRONT_ULTRASONIC_LEFT_ECHO_PIN = 7;
+const uint8_t CARGO_DOOR_SERVO_PIN = 13;
 const uint8_t ARM_GRIP_SERVO_PIN = 44;
 const uint8_t ARM_LIFT_SERVO_PIN = 45;
 const uint8_t MPU6050_ADDR = 0x68;
@@ -68,6 +69,9 @@ const int DEFAULT_ARM_LIFT_DEG = 110;
 const int ARM_GRIP_OPEN_DEG = 120;
 const int ARM_GRIP_CLOSE_DEG = 60;
 const int ARM_LIFT_PICK_DEG = 72;
+// TODO: Replace these placeholder cargo-door servo angles with the real tested open/closed values.
+const int CARGO_DOOR_OPEN_DEG = 120;
+const int CARGO_DOOR_CLOSED_DEG = 30;
 const int MIN_ARM_DEG = 0;
 const int MAX_ARM_DEG = 180;
 
@@ -180,6 +184,7 @@ bool resumePending = false;
 bool manualSessionActive = false;
 bool latestRfidMatch = false;
 bool faultLatched = false;
+bool cargoDoorOpen = false;
 
 uint8_t armActionStep = 0;
 uint8_t invalidDistanceCount = 0;
@@ -201,6 +206,7 @@ int lastHeadingCorrectionPwm = 0;
 
 Servo armGripServo;
 Servo armLiftServo;
+Servo cargoDoorServo;
 
 char commandBuffer[80];
 uint8_t commandLength = 0;
@@ -347,6 +353,16 @@ void setupArm() {
   armLiftServo.attach(ARM_LIFT_SERVO_PIN);
   armGripServo.write(currentArmGripDeg);
   armLiftServo.write(currentArmLiftDeg);
+}
+
+void setCargoDoorOpen(bool openDoor) {
+  cargoDoorOpen = openDoor;
+  cargoDoorServo.write(openDoor ? CARGO_DOOR_OPEN_DEG : CARGO_DOOR_CLOSED_DEG);
+}
+
+void setupCargoDoorServo() {
+  cargoDoorServo.attach(CARGO_DOOR_SERVO_PIN);
+  setCargoDoorOpen(false);
 }
 
 void writeMpuRegister(uint8_t reg, uint8_t value) {
@@ -722,7 +738,7 @@ const char *deliveryResult() {
 }
 
 const char *cargoDoorState() {
-  return remoteUnlockUntilMs > millis() ? "OPEN" : "CLOSED";
+  return cargoDoorOpen ? "OPEN" : "CLOSED";
 }
 
 const char *controlStatus() {
@@ -759,6 +775,21 @@ void clearTaskBookkeeping() {
   resumePending = false;
   savedAutoStage = AUTO_STAGE_NONE;
   setResumeNote("No saved task");
+}
+
+void updateCargoDoorAutoClose() {
+  if (!cargoDoorOpen) {
+    return;
+  }
+  if (remoteUnlockUntilMs == 0) {
+    return;
+  }
+  if (millis() < remoteUnlockUntilMs) {
+    return;
+  }
+  remoteUnlockUntilMs = 0;
+  setCargoDoorOpen(false);
+  setStatusNote("Cargo door auto-closed");
 }
 
 bool frontDistanceValid() {
@@ -1439,12 +1470,14 @@ void handleCommand(const char *command) {
 
   if (strcmp(token, "OPEN_DOOR") == 0) {
     remoteUnlockUntilMs = millis() + REMOTE_UNLOCK_OPEN_MS;
+    setCargoDoorOpen(true);
     clearFaultText();
     return;
   }
 
   if (strcmp(token, "CLOSE_DOOR") == 0) {
     remoteUnlockUntilMs = 0;
+    setCargoDoorOpen(false);
     clearFaultText();
     return;
   }
@@ -1630,6 +1663,7 @@ void setup() {
   setupMotorPins();
   setupFrontUltrasonics();
   setupArm();
+  setupCargoDoorServo();
   stopCar();
 
   if (!initMpu6050()) {
@@ -1652,6 +1686,7 @@ void loop() {
   updateDistanceSnapshot();
   runAutoStateMachine();
   updateDriveFailsafe();
+  updateCargoDoorAutoClose();
   driveCurrentDirection();
   emitTelemetry();
 }

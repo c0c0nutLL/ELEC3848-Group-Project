@@ -245,9 +245,9 @@
               </div>
               <input id="lift-slider" class="slider" type="range" min="0" max="180" value="110">
               <div class="arm-actions">
-                <button class="step" type="button" data-joint="LIFT" data-delta="-5">Lift -5</button>
+                <button class="step" type="button" data-joint="LIFT" data-direction="-1" data-delta="-10">Lift -10</button>
                 <button id="send-lift" class="apply" type="button">Send Lift</button>
-                <button class="step" type="button" data-joint="LIFT" data-delta="5">Lift +5</button>
+                <button class="step" type="button" data-joint="LIFT" data-direction="1" data-delta="10">Lift +10</button>
               </div>
             </div>
             <div class="arm-card">
@@ -260,13 +260,13 @@
               </div>
               <input id="grip-slider" class="slider" type="range" min="0" max="180" value="90">
               <div class="arm-actions">
-                <button class="step" type="button" data-joint="GRIP" data-delta="-5">Grip -5</button>
+                <button class="step" type="button" data-joint="GRIP" data-direction="-1" data-delta="-10">Grip -10</button>
                 <button id="send-grip" class="apply" type="button">Send Grip</button>
-                <button class="step" type="button" data-joint="GRIP" data-delta="5">Grip +5</button>
+                <button class="step" type="button" data-joint="GRIP" data-direction="1" data-delta="10">Grip +10</button>
               </div>
             </div>
           </div>
-          <p id="arm-feedback" class="hint" style="margin-top:14px">Adjust the lift and gripper sliders, then send the selected angle to Arduino. Keyboard: `I / K` moves lift by 5 deg, `J / L` moves gripper by 5 deg. Short press steps once; hold repeats at 5 deg per second.</p>
+          <p id="arm-feedback" class="hint" style="margin-top:14px">Adjust the lift and gripper sliders, then send the selected angle to Arduino. Keyboard: `I / K` moves lift by 10 deg, `J / L` moves gripper by 10 deg. Short press steps once; hold repeats at 10 deg per second. Repeated short presses are merged into the latest target to reduce dropped commands and servo jitter.</p>
         </section>
       </div>
     </div>
@@ -296,14 +296,14 @@
       D: "RIGHT"
     };
     const armKeys = {
-      i: {joint: "LIFT", delta: 5},
-      I: {joint: "LIFT", delta: 5},
-      k: {joint: "LIFT", delta: -5},
-      K: {joint: "LIFT", delta: -5},
-      j: {joint: "GRIP", delta: -5},
-      J: {joint: "GRIP", delta: -5},
-      l: {joint: "GRIP", delta: 5},
-      L: {joint: "GRIP", delta: 5}
+      i: {joint: "LIFT", direction: 1},
+      I: {joint: "LIFT", direction: 1},
+      k: {joint: "LIFT", direction: -1},
+      K: {joint: "LIFT", direction: -1},
+      j: {joint: "GRIP", direction: -1},
+      J: {joint: "GRIP", direction: -1},
+      l: {joint: "GRIP", direction: 1},
+      L: {joint: "GRIP", direction: 1}
     };
 
     const liveText = document.getElementById("live-text");
@@ -336,18 +336,21 @@
     let armRepeatTimer = null;
     let lastPacket = {};
     let controlConfig = {api_path: "/api/control", min_power: 40, default_power: 96, max_power: 100};
-    let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 5};
+    let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 10};
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
     const LOCAL_PENDING_WINDOW_MS = 1500;
     const POWER_SYNC_DEBOUNCE_MS = 120;
     const ARM_KEY_HOLD_DELAY_MS = 450;
     const ARM_KEY_REPEAT_INTERVAL_MS = 1000;
+    const ARM_TARGET_HOLD_MS = 4000;
     const pendingLocalState = {
       motorPwm: {value: null, ts: 0},
-      controlDirection: {value: null, ts: 0},
-      armLiftDeg: {value: null, ts: 0},
-      armGripDeg: {value: null, ts: 0}
+      controlDirection: {value: null, ts: 0}
+    };
+    const armCommandState = {
+      LIFT: {desired: null, lastSent: null, inFlight: false, lockUntilMs: 0},
+      GRIP: {desired: null, lastSent: null, inFlight: false, lockUntilMs: 0}
     };
 
     function clamp(value, min, max) {
@@ -388,14 +391,6 @@
           packet.control_direction.toUpperCase() === pendingLocalState.controlDirection.value) {
         clearPendingValue("controlDirection");
       }
-      if (typeof packet.arm_lift_deg === "number" && pendingEntryActive(pendingLocalState.armLiftDeg) &&
-          packet.arm_lift_deg === pendingLocalState.armLiftDeg.value) {
-        clearPendingValue("armLiftDeg");
-      }
-      if (typeof packet.arm_grip_deg === "number" && pendingEntryActive(pendingLocalState.armGripDeg) &&
-          packet.arm_grip_deg === pendingLocalState.armGripDeg.value) {
-        clearPendingValue("armGripDeg");
-      }
     }
 
     function packetWithPendingValues(packet) {
@@ -407,12 +402,72 @@
       if (pendingEntryActive(pendingLocalState.controlDirection)) {
         merged.control_direction = pendingLocalState.controlDirection.value;
       }
-      if (pendingEntryActive(pendingLocalState.armLiftDeg)) {
-        merged.arm_lift_deg = pendingLocalState.armLiftDeg.value;
-      }
-      if (pendingEntryActive(pendingLocalState.armGripDeg)) {
-        merged.arm_grip_deg = pendingLocalState.armGripDeg.value;
-      }
+      return merged;
+    }
+
+    function jointPacketKey(joint) {
+      return joint === "LIFT" ? "arm_lift_deg" : "arm_grip_deg";
+    }
+
+    function jointLabel(joint) {
+      return joint === "LIFT" ? "Lift" : "Grip";
+    }
+
+    function currentArmStepDeg() {
+      return Math.max(1, Math.round(Number(armConfig.step_deg || 10)));
+    }
+
+    function armDeltaFor(binding) {
+      return Number(binding.direction || 0) * currentArmStepDeg();
+    }
+
+    function updateStepButtonLabels() {
+      const stepDeg = currentArmStepDeg();
+      stepButtons.forEach((button) => {
+        const joint = String(button.dataset.joint || "").toUpperCase();
+        const direction = Number(button.dataset.direction || Math.sign(Number(button.dataset.delta || 0)) || 1);
+        const delta = stepDeg * (direction >= 0 ? 1 : -1);
+        button.dataset.delta = String(delta);
+        button.textContent = `${jointLabel(joint)} ${delta >= 0 ? "+" : ""}${delta}`;
+      });
+    }
+
+    function clearArmTargetState(joint) {
+      armCommandState[joint] = {desired: null, lastSent: null, inFlight: false, lockUntilMs: 0};
+    }
+
+    function armTargetValue(joint) {
+      return armCommandState[joint].desired;
+    }
+
+    function armTargetActive(joint) {
+      const state = armCommandState[joint];
+      return state.desired !== null && (state.inFlight || state.lastSent !== state.desired || Date.now() < state.lockUntilMs);
+    }
+
+    function refreshArmTargetStateFromPacket(packet) {
+      ["LIFT", "GRIP"].forEach((joint) => {
+        const key = jointPacketKey(joint);
+        const state = armCommandState[joint];
+        if (state.desired === null) return;
+        const packetValue = typeof packet[key] === "number" ? Math.round(packet[key]) : null;
+        if (packetValue === state.desired && !state.inFlight) {
+          clearArmTargetState(joint);
+          return;
+        }
+        if (!state.inFlight && state.lastSent === state.desired && Date.now() >= state.lockUntilMs) {
+          clearArmTargetState(joint);
+        }
+      });
+    }
+
+    function applyArmTargetsToPacket(packet) {
+      const merged = {...packet};
+      ["LIFT", "GRIP"].forEach((joint) => {
+        if (!armTargetActive(joint)) return;
+        const key = jointPacketKey(joint);
+        merged[key] = armTargetValue(joint);
+      });
       return merged;
     }
 
@@ -539,7 +594,8 @@
     function render(packet) {
       lastPacket = packet || {};
       syncPendingValuesWithPacket(lastPacket);
-      const displayPacket = packetWithPendingValues(lastPacket);
+      refreshArmTargetStateFromPacket(lastPacket);
+      const displayPacket = applyArmTargetsToPacket(packetWithPendingValues(lastPacket));
       fields.forEach((key) => {
         const node = document.getElementById(key);
         if (node) node.textContent = fmt(displayPacket[key], key);
@@ -607,23 +663,37 @@
         armFeedback.textContent = "Take manual control first.";
         return;
       }
-      if (joint === "LIFT") {
-        setPendingValue("armLiftDeg", angle);
-      } else if (joint === "GRIP") {
-        setPendingValue("armGripDeg", angle);
+      const state = armCommandState[joint];
+      const normalizedAngle = clamp(Math.round(Number(angle)), Number(armConfig.min_angle_deg), Number(armConfig.max_angle_deg));
+      state.desired = normalizedAngle;
+      state.lockUntilMs = Date.now() + ARM_TARGET_HOLD_MS;
+      render(lastPacket);
+
+      if (state.inFlight) {
+        return;
       }
-      await postJson(
-        armConfig.api_path || "/api/arm",
-        {joint, angle, source: source || "manual-page"},
-        armFeedback
-      ).catch(() => {
-        if (joint === "LIFT") {
-          clearPendingValue("armLiftDeg");
-        } else if (joint === "GRIP") {
-          clearPendingValue("armGripDeg");
+
+      while (state.desired !== null && state.lastSent !== state.desired) {
+        const nextAngle = state.desired;
+        state.inFlight = true;
+        state.lastSent = nextAngle;
+        try {
+          await postJson(
+            armConfig.api_path || "/api/arm",
+            {joint, angle: nextAngle, source: source || "manual-page"},
+            armFeedback
+          );
+          state.lockUntilMs = Date.now() + ARM_TARGET_HOLD_MS;
+        } catch (error) {
+          clearArmTargetState(joint);
+          render(lastPacket);
+          return;
+        } finally {
+          state.inFlight = false;
         }
-        render(lastPacket);
-      });
+      }
+
+      render(lastPacket);
     }
 
     async function sendModeAction(action) {
@@ -732,12 +802,12 @@
       if (activeArmKey === key) return;
       clearArmRepeat();
       activeArmKey = key;
-      applyArmStep(binding.joint, binding.delta, "manual-page-key");
+      applyArmStep(binding.joint, armDeltaFor(binding), "manual-page-key");
       armHoldStarter = setTimeout(() => {
         if (activeArmKey !== key) return;
         armRepeatTimer = setInterval(() => {
           if (activeArmKey !== key) return;
-          applyArmStep(binding.joint, binding.delta, "manual-page-key-hold");
+          applyArmStep(binding.joint, armDeltaFor(binding), "manual-page-key-hold");
         }, ARM_KEY_REPEAT_INTERVAL_MS);
       }, ARM_KEY_HOLD_DELAY_MS);
     }
@@ -765,6 +835,7 @@
           gripSlider.value = String(armConfig.default_grip_deg);
           liftRange.textContent = `${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;
           gripRange.textContent = `${armConfig.min_angle_deg} - ${armConfig.max_angle_deg} deg`;
+          updateStepButtonLabels();
           updateArmLabels();
         }
         if (config.mode_control) modeConfig = {...modeConfig, ...config.mode_control};
@@ -896,6 +967,7 @@
     loadConfig().then(() => loadInitial());
     connectEvents();
     updatePower();
+    updateStepButtonLabels();
     updateArmLabels();
   </script>
 </body>

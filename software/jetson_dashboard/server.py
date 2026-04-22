@@ -147,6 +147,7 @@ MIN_ARM_ANGLE_DEG = 0
 MAX_ARM_ANGLE_DEG = 180
 DEFAULT_ARM_LIFT_DEG = 110
 DEFAULT_ARM_GRIP_DEG = 90
+DEFAULT_ARM_STEP_DEG = 10
 ARM_ACTIVE_WINDOW_MS = 1200
 MOCK_UNLOCK_OPEN_MS = 60000
 MOCK_DISTANCE_MIN_CM = 8.0
@@ -1891,7 +1892,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "max_angle_deg": MAX_ARM_ANGLE_DEG,
                 "default_lift_deg": DEFAULT_ARM_LIFT_DEG,
                 "default_grip_deg": DEFAULT_ARM_GRIP_DEG,
-                "step_deg": 5,
+                "step_deg": DEFAULT_ARM_STEP_DEG,
                 "loopback_only": False,
                 "requires_lan_password": True,
             },
