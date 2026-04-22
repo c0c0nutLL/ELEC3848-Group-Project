@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMR Manual Access</title>
+  <style>
+    :root {
+      --bg: #efe8dc;
+      --panel: rgba(255, 252, 246, 0.94);
+      --line: #cfc4b3;
+      --text: #201d18;
+      --muted: #6e665b;
+      --accent: #166a62;
+      --danger: #b54c2e;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(255, 240, 187, 0.7) 0, transparent 26%),
+        radial-gradient(circle at bottom right, rgba(182, 223, 212, 0.7) 0, transparent 28%),
+        var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+
+    .panel {
+      width: min(440px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 24px;
+      box-shadow: 0 18px 40px rgba(32, 29, 24, 0.10);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+    }
+
+    .sub {
+      color: var(--muted);
+      margin: 0 0 20px;
+      line-height: 1.5;
+    }
+
+    label {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 8px;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 18px;
+      background: #fffefa;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 14px;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 16px;
+      font-weight: 700;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .result {
+      margin-top: 16px;
+      border-radius: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: #fffaf1;
+      min-height: 56px;
+      line-height: 1.5;
+    }
+
+    .result.error {
+      border-color: rgba(181, 76, 46, 0.35);
+      color: var(--danger);
+    }
+
+    .footer {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    a {
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Manual Access</h1>
+    <p class="sub">Enter the manual-control password to unlock the LAN control page for this device.</p>
+
+    <label for="password">Password</label>
+    <input id="password" type="password" placeholder="Enter manual-control password" autocomplete="current-password">
+    <button id="submit-btn" type="button">Enter Manual Control</button>
+
+    <div id="result" class="result">Waiting for password input.</div>
+
+    <div class="footer">
+      Home: <a href="/">Open control home</a><br>
+      Status: <a href="/status">Open live status page</a>
+    </div>
+  </div>
+
+  <script>
+    const passwordInput = document.getElementById("password");
+    const submitBtn = document.getElementById("submit-btn");
+    const resultNode = document.getElementById("result");
+
+    function setResult(message, isError = false) {
+      resultNode.textContent = message;
+      resultNode.classList.toggle("error", isError);
+    }
+
+    async function submitPassword() {
+      const password = passwordInput.value;
+      if (!password) {
+        setResult("Password cannot be empty.", true);
+        return;
+      }
+
+      submitBtn.disabled = true;
+      setResult("Checking password...");
+
+      try {
+        const response = await fetch("/api/manual-access/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ password }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          setResult(payload.message || "Wrong password.", true);
+          return;
+        }
+
+        setResult("Password accepted. Opening manual control...");
+        window.location.href = payload.redirect || "/manual";
+      } catch (error) {
+        setResult(`Login request failed: ${error}`, true);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    submitBtn.addEventListener("click", submitPassword);
+    passwordInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        submitPassword();
+      }
+    });
+  </script>
+</body>
+</html>

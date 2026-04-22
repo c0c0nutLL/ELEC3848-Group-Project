@@ -27,7 +27,10 @@ Current data path:
 - [manual.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/manual.html)
   - dedicated manual-control page
   - includes both chassis control and arm control
+  - non-loopback clients must pass a password gate before this page is served
 - [tasks.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/tasks.html)
+ - [manual_access.html](/F:/鏉庝粊鏉?棣欐腐澶у/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/manual_access.html)
+  - password gate used for LAN manual-control access
   - dedicated task-selection page
   - includes placeholder task presets and interrupt/resume demo controls
 - [status.html](/F:/李仁杰/香港大学/2025-2026/ELEC3848/Group%20project/software/jetson_dashboard/status.html)
@@ -56,6 +59,7 @@ The UI is now organized around a clear home-page entry model:
   - currently serves the same page as `/dashboard`
 - `/manual`
   - dedicated manual + arm page
+  - non-loopback clients first see the password gate, then enter the real manual page after login
 - `/arm`
   - redirects to `/manual`
 - `/tasks`
@@ -264,9 +268,13 @@ Current placeholder state model:
 
 Existing APIs:
 
+- `POST /api/manual-access/login`
+- `POST /api/manual-access/logout`
 - `POST /api/control`
 - `POST /api/arm`
 - `POST /api/unlock`
+
+`POST /api/manual-access/login` accepts `{"password": "elec3848"}` and sets the LAN manual-access session cookie.
 
 `POST /api/unlock` accepts either `{"action": "OPEN", "password": "3848"}` or `{"action": "CLOSE"}`.
 
@@ -397,12 +405,13 @@ If the board enumerates differently, override the path explicitly, for example:
 - `/dev/ttyACM0`
 - `/dev/ttyACM1`
 
-## Default Safety Behavior
+## Default Network Behavior
 
-The current defaults remain conservative:
+The current defaults are now LAN-ready:
 
-- `server.py` binds to `127.0.0.1` by default
-- `/api/control`, `/api/arm`, `/api/task`, and `/api/mode` accept loopback clients only
+- `server.py` binds to `0.0.0.0` by default
+- `/api/control`, `/api/arm`, `/api/task`, and `/api/mode` accept loopback clients directly
+- the same manual APIs also accept LAN clients after a successful `/manual` password login
 - task-selection `POST` routes also accept loopback clients only
 - realtime commands are rejected while the serial bridge is disconnected
 - queued commands are dropped when the serial bridge disconnects
@@ -418,16 +427,11 @@ Local access:
 - Debug: `http://127.0.0.1:8080/debug`
 - Unlock: `http://127.0.0.1:8080/unlock`
 
-If phone access to `/unlock` is needed, expose the service explicitly:
-
-```bash
-python3 server.py --serial /dev/ttyUSB0 --baud 115200 --http-port 8080 --host 0.0.0.0
-```
-
 Notes:
 
 - `/unlock` can then be reached from another device on the LAN
-- `/api/control`, `/api/arm`, `/api/task`, and `/api/mode` remain loopback-only
+- `/manual` can also be reached from another device on the LAN
+- non-loopback clients must pass the `/manual` password gate before `/api/control`, `/api/arm`, `/api/task`, and `/api/mode` will accept their requests
 
 ## Mock Mode
 

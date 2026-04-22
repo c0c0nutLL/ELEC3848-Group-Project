@@ -2,9 +2,11 @@ import argparse
 import ipaddress
 import json
 import queue
+import secrets
 import threading
 import time
 from collections import deque
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -26,6 +28,7 @@ TASKS_HTML = BASE_DIR / "tasks.html"
 STATUS_HTML = BASE_DIR / "status.html"
 DEBUG_HTML = BASE_DIR / "debug.html"
 UNLOCK_HTML = BASE_DIR / "unlock.html"
+MANUAL_ACCESS_HTML = BASE_DIR / "manual_access.html"
 UNLOCK_CONFIG_PATH = BASE_DIR / "unlock_config.json"
 
 DEFAULT_UNLOCK_CONFIG = {
@@ -151,6 +154,9 @@ MODE_PROTOCOL_VERSION = "interrupt-resume-v1"
 RUN_MODE_AUTO = "AUTO"
 RUN_MODE_MANUAL_OVERRIDE = "MANUAL_OVERRIDE"
 RUN_MODE_FAULT = "FAULT"
+MANUAL_ACCESS_PASSWORD = "elec3848"
+MANUAL_ACCESS_COOKIE_NAME = "amr_manual_access"
+MANUAL_ACCESS_SESSION_TTL_MS = 12 * 60 * 60 * 1000
 
 state_lock = threading.Lock()
 clients_lock = threading.Lock()
@@ -158,6 +164,7 @@ unlock_lock = threading.Lock()
 control_lock = threading.Lock()
 arm_lock = threading.Lock()
 task_selection_lock = threading.Lock()
+manual_access_lock = threading.Lock()
 
 latest_state = {}  # type: Dict[str, Any]
 state_history = deque(maxlen=100)  # type: Deque[Dict[str, Any]]
@@ -189,6 +196,7 @@ mock_sensor_state = {
     "left_cm": 89.0,
 }  # type: Dict[str, float]
 task_selection_state = {}  # type: Dict[str, Any]
+manual_access_sessions = {}  # type: Dict[str, Dict[str, Any]]
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -213,6 +221,58 @@ def is_loopback_client(client_ip: str) -> bool:
         return ipaddress.ip_address(client_ip).is_loopback
     except ValueError:
         return False
+
+
+def cleanup_manual_access_sessions(now_ms: Optional[int] = None) -> None:
+    if now_ms is None:
+        now_ms = current_time_ms()
+
+    expired_tokens = []
+    with manual_access_lock:
+        for token, session in manual_access_sessions.items():
+            if int(session.get("expires_ms", 0)) <= now_ms:
+                expired_tokens.append(token)
+
+        for token in expired_tokens:
+            manual_access_sessions.pop(token, None)
+
+
+def create_manual_access_session(client_ip: str) -> str:
+    now_ms = current_time_ms()
+    cleanup_manual_access_sessions(now_ms)
+    token = secrets.token_urlsafe(32)
+    with manual_access_lock:
+        manual_access_sessions[token] = {
+            "client_ip": client_ip,
+            "created_ms": now_ms,
+            "expires_ms": now_ms + MANUAL_ACCESS_SESSION_TTL_MS,
+        }
+    return token
+
+
+def revoke_manual_access_session(token: str) -> None:
+    if not token:
+        return
+    with manual_access_lock:
+        manual_access_sessions.pop(token, None)
+
+
+def manual_access_session_valid(token: str, client_ip: str) -> bool:
+    if not token:
+        return False
+
+    now_ms = current_time_ms()
+    cleanup_manual_access_sessions(now_ms)
+
+    with manual_access_lock:
+        session = manual_access_sessions.get(token)
+        if session is None:
+            return False
+        if str(session.get("client_ip", "")) != client_ip:
+            return False
+
+        session["expires_ms"] = now_ms + MANUAL_ACCESS_SESSION_TTL_MS
+        return True
 
 
 def bridge_is_connected() -> bool:
@@ -1572,6 +1632,52 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def cookie_value(self, name: str) -> str:
+        raw_cookie = self.headers.get("Cookie", "")
+        if not raw_cookie:
+            return ""
+
+        cookie = SimpleCookie()
+        try:
+            cookie.load(raw_cookie)
+        except Exception:
+            return ""
+
+        morsel = cookie.get(name)
+        if morsel is None:
+            return ""
+        return morsel.value
+
+    def manual_access_allowed(self, client_ip: str) -> bool:
+        if is_loopback_client(client_ip):
+            return True
+
+        session_token = self.cookie_value(MANUAL_ACCESS_COOKIE_NAME)
+        return manual_access_session_valid(session_token, client_ip)
+
+    def require_manual_access(self, client_ip: str, capability: str) -> bool:
+        if self.manual_access_allowed(client_ip):
+            return True
+
+        self.send_json(
+            {
+                "ok": False,
+                "message": (
+                    f"{capability} requires loopback access or a successful LAN manual-access login "
+                    "from /manual"
+                ),
+            },
+            HTTPStatus.FORBIDDEN,
+        )
+        return False
+
+    def manual_access_cookie_header(self, token: str, *, expire_now: bool = False) -> str:
+        max_age = 0 if expire_now else MANUAL_ACCESS_SESSION_TTL_MS // 1000
+        value = "" if expire_now else token
+        return (
+            f"{MANUAL_ACCESS_COOKIE_NAME}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
+        )
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
@@ -1592,7 +1698,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/manual":
-            self.serve_file(MANUAL_HTML)
+            client_ip = self.client_address[0] if self.client_address else "unknown"
+            self.serve_file(MANUAL_HTML if self.manual_access_allowed(client_ip) else MANUAL_ACCESS_HTML)
             return
 
         if parsed.path == "/tasks":
@@ -1644,6 +1751,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/manual-access/login":
+            self.handle_manual_access_login_post()
+            return
+
+        if parsed.path == "/api/manual-access/logout":
+            self.handle_manual_access_logout_post()
+            return
+
         if parsed.path == "/api/unlock":
             self.handle_unlock_post()
             return
@@ -1686,11 +1801,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         self.send_error(HTTPStatus.NOT_FOUND)
 
-    def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def send_json(
+        self,
+        payload: Any,
+        status: HTTPStatus = HTTPStatus.OK,
+        extra_headers: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        if extra_headers:
+            for name, value in extra_headers:
+                self.send_header(name, value)
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
@@ -1755,7 +1878,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "directions": sorted(ALLOWED_DRIVE_DIRECTIONS),
                 "default_power": DEFAULT_DRIVE_POWER,
                 "max_power": MAX_DRIVE_POWER,
-                "loopback_only": True,
+                "loopback_only": False,
+                "requires_lan_password": True,
                 "requires_manual_override_when_supported": True,
             },
             "arm_control": {
@@ -1766,7 +1890,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "default_lift_deg": DEFAULT_ARM_LIFT_DEG,
                 "default_grip_deg": DEFAULT_ARM_GRIP_DEG,
                 "step_deg": 5,
-                "loopback_only": True,
+                "loopback_only": False,
+                "requires_lan_password": True,
             },
             "unlock_control": {
                 "api_path": "/api/unlock",
@@ -1779,12 +1904,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "api_path": "/api/mode",
                 "actions": sorted(ALLOWED_MODE_ACTIONS),
                 "protocol_version": MODE_PROTOCOL_VERSION,
-                "loopback_only": True,
+                "loopback_only": False,
+                "requires_lan_password": True,
             },
             "task_control": {
                 "api_path": "/api/task",
                 "actions": sorted(ALLOWED_TASK_ACTIONS),
-                "loopback_only": True,
+                "loopback_only": False,
+                "requires_lan_password": True,
+            },
+            "manual_access": {
+                "login_api_path": "/api/manual-access/login",
+                "logout_api_path": "/api/manual-access/logout",
+                "loopback_bypasses_password": True,
+                "password_required_for_lan": True,
+                "session_ttl_ms": MANUAL_ACCESS_SESSION_TTL_MS,
             },
             "task_selection": {
                 "backend_binding": "placeholder_only",
@@ -1859,6 +1993,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("request body must be a JSON object")
         return data
 
+    def handle_manual_access_login_post(self) -> None:
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        password = str(data.get("password", ""))
+        if password != MANUAL_ACCESS_PASSWORD:
+            self.send_json(
+                {"ok": False, "message": "wrong manual-control password"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+
+        session_token = create_manual_access_session(client_ip)
+        self.send_json(
+            {
+                "ok": True,
+                "message": "manual access granted",
+                "redirect": "/manual",
+            },
+            HTTPStatus.OK,
+            extra_headers=[("Set-Cookie", self.manual_access_cookie_header(session_token))],
+        )
+
+    def handle_manual_access_logout_post(self) -> None:
+        session_token = self.cookie_value(MANUAL_ACCESS_COOKIE_NAME)
+        revoke_manual_access_session(session_token)
+        self.send_json(
+            {"ok": True, "message": "manual access cleared"},
+            HTTPStatus.OK,
+            extra_headers=[("Set-Cookie", self.manual_access_cookie_header("", expire_now=True))],
+        )
+
     def handle_unlock_post(self) -> None:
         try:
             data = self.read_json_body()
@@ -1884,11 +2054,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_control_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "manual drive is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "manual drive"):
             return
 
         try:
@@ -1905,11 +2071,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_arm_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "arm control is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "arm control"):
             return
 
         try:
@@ -1926,11 +2088,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_mode_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "mode control is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "mode control"):
             return
 
         try:
@@ -1946,11 +2104,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def handle_task_post(self) -> None:
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        if not is_loopback_client(client_ip):
-            self.send_json(
-                {"ok": False, "message": "task control is only allowed from loopback clients"},
-                HTTPStatus.FORBIDDEN,
-            )
+        if not self.require_manual_access(client_ip, "task control"):
             return
 
         try:
@@ -2065,7 +2219,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Jetson Nano serial telemetry dashboard")
     parser.add_argument("--serial", default="/dev/ttyUSB0", help="Arduino serial device path")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
-    parser.add_argument("--host", default="127.0.0.1", help="HTTP bind host")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP bind host")
     parser.add_argument("--http-port", type=int, default=8080, help="HTTP port")
     parser.add_argument("--mock", action="store_true", help="Use mock data instead of serial input")
     parser.add_argument("--config", default=str(UNLOCK_CONFIG_PATH), help="Unlock config JSON path")
