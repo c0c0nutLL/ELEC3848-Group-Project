@@ -57,8 +57,6 @@ const uint8_t CARGO_DOOR_SERVO_PIN = 13;
 const uint8_t ARM_LIFT_SERVO_PIN = 44;
 const uint8_t ARM_GRIP_SERVO_PIN = 45;
 
-// TODO(pin-mapping): hardware/amr_pin_mapping_template.xlsx does not list the RC522 RST / NRSTPD pin.
-// Keep the existing proposal candidate until the wiring table is confirmed.
 const uint8_t RFID_RST_PIN = 5;
 
 const uint8_t MPU6050_ADDR = 0x68;
@@ -1001,7 +999,7 @@ void setupRfidReader() {
 }
 
 void formatUidHex(const uchar *uid, size_t count, char *output, size_t outputSize) {
-  static const char HEX[] = "0123456789ABCDEF";
+  static const char HEX_DIGITS[] = "0123456789ABCDEF";
   size_t outIndex = 0;
 
   if (outputSize == 0) {
@@ -1009,8 +1007,8 @@ void formatUidHex(const uchar *uid, size_t count, char *output, size_t outputSiz
   }
 
   for (size_t i = 0; i < count && outIndex + 2 < outputSize; ++i) {
-    output[outIndex++] = HEX[(uid[i] >> 4) & 0x0F];
-    output[outIndex++] = HEX[uid[i] & 0x0F];
+    output[outIndex++] = HEX_DIGITS[(uid[i] >> 4) & 0x0F];
+    output[outIndex++] = HEX_DIGITS[uid[i] & 0x0F];
   }
   output[outIndex] = '\0';
 }

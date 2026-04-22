@@ -140,13 +140,9 @@ Applied workbook-derived values in the current sketch include:
 - arm gripper pin
 - door servo pin
 - RFID SS pin
+- RFID RST pin
 - red LED pin
 - green LED pin
-
-Known unresolved item:
-
-- the workbook does not specify the RFID `RST` pin
-- `final_integrated_firmware.ino` keeps the preserved candidate value and marks it with a TODO near the pin block
 
 ## Source Inputs
 
