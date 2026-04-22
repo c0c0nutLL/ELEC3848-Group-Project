@@ -59,7 +59,7 @@ const uint8_t ARM_GRIP_SERVO_PIN = 45;
 
 // TODO(pin-mapping): hardware/amr_pin_mapping_template.xlsx does not list the RC522 RST / NRSTPD pin.
 // Keep the existing proposal candidate until the wiring table is confirmed.
-const uint8_t RFID_RST_PIN = 49;
+const uint8_t RFID_RST_PIN = 5;
 
 const uint8_t MPU6050_ADDR = 0x68;
 const char *MODE_PROTOCOL_VERSION = "mission-runtime-v1";
@@ -123,10 +123,8 @@ const float OBSTACLE_CLEAR_CM = 28.0f;
 const uint8_t MAX_INVALID_DISTANCE_COUNT = 10;
 const uint8_t MAX_GYRO_READ_FAIL_COUNT = 8;
 
-// TODO(rfid-config): replace these sample UID strings with the real pickup / delivery station cards when available.
-// These are concrete 4-byte UID examples already documented under firmware/arduino/HW-868/README.md.
-const char PICKUP_RFID_UID[] = "4BE6D13B";
-const char DELIVERY_RFID_UID[] = "3BE6D13B";
+const char PICKUP_RFID_UID[] = "7B97F506";
+const char DELIVERY_RFID_UID[] = "6C263307";
 
 enum DriveDirection {
   DRIVE_STOP = 0,
