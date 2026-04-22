@@ -221,12 +221,12 @@
             <div class="power-wrap" style="margin-top:14px">
               <div class="power-box">
                 <div class="power-meta">
-                  <div id="power-value" class="power-num">96</div>
+                  <div id="power-value" class="power-num">30</div>
                   <div class="sub">PWM</div>
                 </div>
-                <input id="power-slider" class="slider" type="range" min="40" max="100" value="96">
+                <input id="power-slider" class="slider" type="range" min="25" max="100" value="30">
               </div>
-              <p class="hint">Changing the slider updates the next drive command. The manual range is limited to 40 - 100 PWM, and if a direction is being held the new value is sent immediately.</p>
+              <p class="hint">Changing the slider updates the next drive command. The manual range is limited to 25 - 100 PWM, and if a direction is being held the new value is sent immediately.</p>
             </div>
           </section>
         </div>
@@ -239,11 +239,11 @@
               <div class="arm-head">
                 <div>
                   <div class="label">Lift Servo</div>
-                  <div id="lift-value" class="arm-num">110 deg</div>
+                  <div id="lift-value" class="arm-num">30 deg</div>
                 </div>
                 <div id="lift-range" class="sub">0 - 180 deg</div>
               </div>
-              <input id="lift-slider" class="slider" type="range" min="0" max="180" value="110">
+              <input id="lift-slider" class="slider" type="range" min="0" max="180" value="30">
               <div class="arm-actions">
                 <button class="step" type="button" data-joint="LIFT" data-direction="-1" data-delta="-10">Lift -10</button>
                 <button id="send-lift" class="apply" type="button">Send Lift</button>
@@ -254,11 +254,11 @@
               <div class="arm-head">
                 <div>
                   <div class="label">Gripper Servo</div>
-                  <div id="grip-value" class="arm-num">90 deg</div>
+                  <div id="grip-value" class="arm-num">60 deg</div>
                 </div>
                 <div id="grip-range" class="sub">0 - 180 deg</div>
               </div>
-              <input id="grip-slider" class="slider" type="range" min="0" max="180" value="90">
+              <input id="grip-slider" class="slider" type="range" min="0" max="180" value="60">
               <div class="arm-actions">
                 <button class="step" type="button" data-joint="GRIP" data-direction="-1" data-delta="-10">Grip -10</button>
                 <button id="send-grip" class="apply" type="button">Send Grip</button>
@@ -335,8 +335,8 @@
     let activeArmKey = null;
     let armRepeatTimer = null;
     let lastPacket = {};
-    let controlConfig = {api_path: "/api/control", min_power: 40, default_power: 96, max_power: 100};
-    let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 10};
+    let controlConfig = {api_path: "/api/control", min_power: 25, default_power: 30, max_power: 100};
+    let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 30, default_grip_deg: 60, step_deg: 10};
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
     const LOCAL_PENDING_WINDOW_MS = 1500;
@@ -820,9 +820,9 @@
 
         if (config.manual_control) {
           controlConfig = {...controlConfig, ...config.manual_control};
-          powerSlider.min = String(controlConfig.min_power || 40);
+          powerSlider.min = String(controlConfig.min_power || 25);
           powerSlider.max = String(controlConfig.max_power || 100);
-          powerSlider.value = String(clamp(Number(controlConfig.default_power || 96), Number(powerSlider.min), Number(powerSlider.max)));
+          powerSlider.value = String(clamp(Number(controlConfig.default_power || 30), Number(powerSlider.min), Number(powerSlider.max)));
           updatePower();
         }
         if (config.arm_control) {

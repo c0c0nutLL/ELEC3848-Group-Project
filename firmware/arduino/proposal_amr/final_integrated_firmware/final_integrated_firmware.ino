@@ -74,6 +74,7 @@ const unsigned long VERIFY_SETTLE_MS = 300UL;
 const unsigned long VERIFY_TIMEOUT_MS = 8000UL;
 const unsigned long DOCK_STABLE_MS = 450UL;
 const unsigned long ARM_STEP_WAIT_MS = 550UL;
+const unsigned long PICKUP_MISSION_ARM_STEP_WAIT_MS = (ARM_STEP_WAIT_MS * 3UL) / 2UL;
 const unsigned long DOOR_SETTLE_MS = 900UL;
 const unsigned long LOAD_SETTLE_MS = 2500UL;
 const unsigned long TURN_AROUND_MS = 720UL;
@@ -84,7 +85,7 @@ const unsigned long OBSTACLE_STRAFE_MS = 850UL;
 const unsigned long OBSTACLE_PASS_MS = 1200UL;
 const unsigned long OBSTACLE_RETURN_MS = 850UL;
 
-const int DEFAULT_MOTOR_PWM = 45;
+const int DEFAULT_MOTOR_PWM = 30;
 const int MIN_MOTOR_PWM = 0;
 const int MAX_MOTOR_PWM = 255;
 const int AUTO_TRAVEL_PWM = 45;
@@ -92,6 +93,9 @@ const int AUTO_APPROACH_PWM = 45;
 const int AUTO_DOCK_PWM = 45;
 const int AUTO_STRAFE_PWM = 45;
 const int AUTO_TURN_PWM = 45;
+const int FULL_MISSION_AUTO_PWM = 30;
+const int FULL_MISSION_TURN_PWM = 30;
+const int FULL_MISSION_FORWARD_LEFT_TRIM_PWM = 3;
 
 const int DEFAULT_ARM_LIFT_DEG = 30;
 const int DEFAULT_ARM_GRIP_DEG = 60;
@@ -108,6 +112,7 @@ const float GYRO_SCALE_DPS_PER_LSB = 131.0f;
 const float HEADING_HOLD_KP = 2.2f;
 const float HEADING_HOLD_DEADBAND_DEG = 0.8f;
 const int HEADING_HOLD_MAX_PWM = 24;
+const float TURN_AROUND_TOLERANCE_DEG = 2.0f;
 
 const float CORRIDOR_TO_APPROACH_CM = 90.0f;
 const float APPROACH_TO_DOCK_CM = 48.0f;
@@ -207,6 +212,8 @@ const DirectionTrim DEFAULT_DIRECTION_TRIM[] = {
   {{0, 0, 0, 0}},
   {{0, 0, 0, 0}}
 };
+
+const DirectionTrim FULL_MISSION_FORWARD_DIRECTION_TRIM = {{FULL_MISSION_FORWARD_LEFT_TRIM_PWM, 0, FULL_MISSION_FORWARD_LEFT_TRIM_PWM, 0}};
 
 // Minimal MFRC522 register set for polling UID over SPI.
 #define MAX_LEN 16
@@ -562,6 +569,34 @@ int computeHeadingCorrectionPwm() {
   return constrain(correction, -maxCorrection, maxCorrection);
 }
 
+int activeAutoPwm(int basePwm) {
+  if (currentTask == TASK_FULL_MISSION) {
+    return FULL_MISSION_AUTO_PWM;
+  }
+  return basePwm;
+}
+
+int activeTurnAroundPwm() {
+  if (currentTask == TASK_FULL_MISSION) {
+    return FULL_MISSION_TURN_PWM;
+  }
+  return AUTO_TURN_PWM;
+}
+
+unsigned long activePickupArmStepWaitMs() {
+  if (currentTask == TASK_PICKUP_MISSION) {
+    return PICKUP_MISSION_ARM_STEP_WAIT_MS;
+  }
+  return ARM_STEP_WAIT_MS;
+}
+
+const DirectionTrim &activeDirectionTrim(DriveDirection direction) {
+  if (currentTask == TASK_FULL_MISSION && direction == DRIVE_FORWARD) {
+    return FULL_MISSION_FORWARD_DIRECTION_TRIM;
+  }
+  return DEFAULT_DIRECTION_TRIM[direction];
+}
+
 void setMotionCommand(DriveDirection direction, int requestedPwm, bool refreshHeadingTarget) {
   DriveDirection previousDirection = currentDirection;
   motorPwm = constrain(requestedPwm, MIN_MOTOR_PWM, MAX_MOTOR_PWM);
@@ -589,7 +624,7 @@ void driveCurrentDirection() {
 
   int correctionPwm = usesHeadingHold(currentDirection) ? computeHeadingCorrectionPwm() : 0;
   lastHeadingCorrectionPwm = correctionPwm;
-  const DirectionTrim &trim = DEFAULT_DIRECTION_TRIM[currentDirection];
+  const DirectionTrim &trim = activeDirectionTrim(currentDirection);
 
   for (uint8_t motor = 0; motor < MOTOR_COUNT; ++motor) {
     int basePwm = constrain(motorPwm + trim.offset[motor], MIN_MOTOR_PWM, MAX_MOTOR_PWM);
@@ -1252,7 +1287,7 @@ void enterAutoStage(AutoStage stage) {
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_TRAVEL_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_TRAVEL_PWM), false);
       captureHeadingTarget();
       setStatusNote("Mission start stage");
       break;
@@ -1266,41 +1301,44 @@ void enterAutoStage(AutoStage stage) {
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Verifying pickup RFID");
       break;
     case STAGE_PICKUP_SEQUENCE:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Running pickup sequence");
       break;
     case STAGE_OPEN_DOOR_FOR_LOAD:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Opening door for load");
       break;
     case STAGE_LOAD_CARGO:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Waiting for cargo load");
       break;
     case STAGE_CLOSE_DOOR_AFTER_LOAD:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Closing door after load");
       break;
     case STAGE_TURN_AROUND:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
+      if (mpuReady && currentTask == TASK_FULL_MISSION) {
+        headingTargetDeg = headingDeg + 180.0f;
+      }
       setStatusNote("Turning around");
       break;
     case STAGE_TRAVEL_TO_DELIVERY:
@@ -1313,42 +1351,42 @@ void enterAutoStage(AutoStage stage) {
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Verifying delivery RFID");
       break;
     case STAGE_WAIT_USER_UNLOCK:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Waiting for Jetson unlock");
       break;
     case STAGE_OPEN_DOOR_FOR_UNLOAD:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Opening door for unload");
       break;
     case STAGE_WAIT_DOOR_CLOSE:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Waiting for door close");
       break;
     case STAGE_AUTO_CLOSE_DOOR:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Auto-closing cargo door");
       break;
     case STAGE_REPORT_STATUS:
       currentMode = MODE_AUTO;
       manualSessionActive = false;
       taskActive = true;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Reporting mission result");
       break;
     case STAGE_DONE:
@@ -1625,25 +1663,25 @@ void updateObstacleRoutine() {
 
   switch (obstacleRoutineStep) {
     case 0:
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       if (elapsedMs >= OBSTACLE_STOP_HOLD_MS) {
         advanceObstacleRoutine();
       }
       break;
     case 1:
-      setMotionCommand(DRIVE_RIGHT, AUTO_STRAFE_PWM, false);
+      setMotionCommand(DRIVE_RIGHT, activeAutoPwm(AUTO_STRAFE_PWM), false);
       if (elapsedMs >= OBSTACLE_STRAFE_MS) {
         advanceObstacleRoutine();
       }
       break;
     case 2:
-      setMotionCommand(DRIVE_FORWARD, AUTO_APPROACH_PWM, true);
+      setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_APPROACH_PWM), true);
       if (elapsedMs >= OBSTACLE_PASS_MS) {
         advanceObstacleRoutine();
       }
       break;
     case 3:
-      setMotionCommand(DRIVE_LEFT, AUTO_STRAFE_PWM, false);
+      setMotionCommand(DRIVE_LEFT, activeAutoPwm(AUTO_STRAFE_PWM), false);
       if (elapsedMs >= OBSTACLE_RETURN_MS) {
         advanceObstacleRoutine();
       }
@@ -1651,7 +1689,7 @@ void updateObstacleRoutine() {
     default:
       obstacleRoutineActive = false;
       obstacleRoutineStep = 0;
-      setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       setStatusNote("Obstacle routine cleared");
       break;
   }
@@ -1659,7 +1697,7 @@ void updateObstacleRoutine() {
 
 void runTravelStage(bool pickupPhase) {
   if (pickupPhase ? pickupRfidMatched : deliveryRfidMatched) {
-    setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+    setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
     enterAutoStage(pickupPhase ? STAGE_VERIFY_PICKUP_STATION : STAGE_VERIFY_DELIVERY_STATION);
     return;
   }
@@ -1670,10 +1708,10 @@ void runTravelStage(bool pickupPhase) {
 
   if (fabs(latestDiffCm) > DOCK_ALIGN_TOLERANCE_CM && latestAverageCm <= APPROACH_TO_DOCK_CM) {
     if (latestDiffCm > 0.0f) {
-      setMotionCommand(DRIVE_RIGHT, AUTO_STRAFE_PWM, false);
+      setMotionCommand(DRIVE_RIGHT, activeAutoPwm(AUTO_STRAFE_PWM), false);
       setStatusNote(pickupPhase ? "Pickup align strafing right" : "Delivery align strafing right");
     } else {
-      setMotionCommand(DRIVE_LEFT, AUTO_STRAFE_PWM, false);
+      setMotionCommand(DRIVE_LEFT, activeAutoPwm(AUTO_STRAFE_PWM), false);
       setStatusNote(pickupPhase ? "Pickup align strafing left" : "Delivery align strafing left");
     }
     dockStableStartedMs = 0;
@@ -1681,27 +1719,27 @@ void runTravelStage(bool pickupPhase) {
   }
 
   if (latestAverageCm > APPROACH_TO_DOCK_CM) {
-    setMotionCommand(DRIVE_FORWARD, AUTO_TRAVEL_PWM, false);
+    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_TRAVEL_PWM), false);
     setStatusNote(pickupPhase ? "Traveling to pickup RFID" : "Traveling to delivery RFID");
     dockStableStartedMs = 0;
     return;
   }
 
   if (latestAverageCm > DOCK_TARGET_CM + DOCK_DISTANCE_TOLERANCE_CM) {
-    setMotionCommand(DRIVE_FORWARD, AUTO_APPROACH_PWM, false);
+    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_APPROACH_PWM), false);
     setStatusNote(pickupPhase ? "Approaching pickup dock" : "Approaching delivery dock");
     dockStableStartedMs = 0;
     return;
   }
 
   if (latestAverageCm < DOCK_TARGET_CM - DOCK_DISTANCE_TOLERANCE_CM) {
-    setMotionCommand(DRIVE_BACKWARD, AUTO_DOCK_PWM, false);
+    setMotionCommand(DRIVE_BACKWARD, activeAutoPwm(AUTO_DOCK_PWM), false);
     setStatusNote(pickupPhase ? "Backing off pickup dock" : "Backing off delivery dock");
     dockStableStartedMs = 0;
     return;
   }
 
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (dockStableStartedMs == 0) {
     dockStableStartedMs = millis();
     setStatusNote(pickupPhase ? "Holding at pickup dock" : "Holding at delivery dock");
@@ -1714,7 +1752,7 @@ void runTravelStage(bool pickupPhase) {
 }
 
 void runVerifyStage(bool pickupPhase) {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   bool matched = pickupPhase ? pickupRfidMatched : deliveryRfidMatched;
   if (matched && millis() - autoStageStartedMs >= VERIFY_SETTLE_MS) {
     setStatusNote(pickupPhase ? "Pickup RFID verified" : "Delivery RFID verified");
@@ -1728,7 +1766,8 @@ void runVerifyStage(bool pickupPhase) {
 }
 
 void runPickupSequenceStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
+  const unsigned long armWaitMs = activePickupArmStepWaitMs();
 
   switch (pickupSequenceStep) {
     case 0:
@@ -1737,14 +1776,14 @@ void runPickupSequenceStage() {
       pickupSequenceStep = 1;
       break;
     case 1:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+      if (millis() - armStepStartedMs >= armWaitMs) {
         applyArmCommandInternal("LIFT", PICKUP_LIFT_GRAB_DEG);
         armStepStartedMs = millis();
         pickupSequenceStep = 2;
       }
       break;
     default:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+      if (millis() - armStepStartedMs >= armWaitMs) {
         enterAutoStage(STAGE_OPEN_DOOR_FOR_LOAD);
       }
       break;
@@ -1752,7 +1791,7 @@ void runPickupSequenceStage() {
 }
 
 void runOpenDoorForLoadStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (millis() - autoStageStartedMs < 20UL) {
     setCargoDoorOpen(true);
   }
@@ -1762,7 +1801,8 @@ void runOpenDoorForLoadStage() {
 }
 
 void runLoadCargoStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
+  const unsigned long armWaitMs = activePickupArmStepWaitMs();
 
   switch (pickupSequenceStep) {
     case 0:
@@ -1771,21 +1811,21 @@ void runLoadCargoStage() {
       pickupSequenceStep = 1;
       break;
     case 1:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+      if (millis() - armStepStartedMs >= armWaitMs) {
         applyArmCommandInternal("LIFT", LOAD_LIFT_PLACE_DEG);
         armStepStartedMs = millis();
         pickupSequenceStep = 2;
       }
       break;
     case 2:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+      if (millis() - armStepStartedMs >= armWaitMs) {
         applyArmCommandInternal("LIFT", DEFAULT_ARM_LIFT_DEG);
         armStepStartedMs = millis();
         pickupSequenceStep = 3;
       }
       break;
     default:
-      if (millis() - armStepStartedMs >= ARM_STEP_WAIT_MS) {
+      if (millis() - armStepStartedMs >= armWaitMs) {
         applyArmCommandInternal("GRIP", DEFAULT_ARM_GRIP_DEG);
         enterAutoStage(STAGE_CLOSE_DOOR_AFTER_LOAD);
       }
@@ -1794,7 +1834,7 @@ void runLoadCargoStage() {
 }
 
 void runCloseDoorAfterLoadStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (millis() - autoStageStartedMs < 20UL) {
     setCargoDoorOpen(false);
   }
@@ -1808,15 +1848,28 @@ void runCloseDoorAfterLoadStage() {
 }
 
 void runTurnAroundStage() {
-  setMotionCommand(DRIVE_TURN_RIGHT, AUTO_TURN_PWM, false);
+  if (currentTask == TASK_FULL_MISSION && mpuReady) {
+    float headingErrorDeg = headingTargetDeg - headingDeg;
+    if (fabs(headingErrorDeg) <= TURN_AROUND_TOLERANCE_DEG) {
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
+      enterAutoStage(STAGE_TRAVEL_TO_DELIVERY);
+      return;
+    }
+
+    DriveDirection turnDirection = headingErrorDeg > 0.0f ? DRIVE_TURN_RIGHT : DRIVE_TURN_LEFT;
+    setMotionCommand(turnDirection, activeTurnAroundPwm(), false);
+    return;
+  }
+
+  setMotionCommand(DRIVE_TURN_RIGHT, activeTurnAroundPwm(), false);
   if (millis() - autoStageStartedMs >= TURN_AROUND_MS) {
-    setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+    setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
     enterAutoStage(STAGE_TRAVEL_TO_DELIVERY);
   }
 }
 
 void runWaitUserUnlockStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (unlockApproved) {
     unlockApproved = false;
     enterAutoStage(STAGE_OPEN_DOOR_FOR_UNLOAD);
@@ -1824,7 +1877,7 @@ void runWaitUserUnlockStage() {
 }
 
 void runOpenDoorForUnloadStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (millis() - autoStageStartedMs < 20UL) {
     setCargoDoorOpen(true);
     unloadDoorOpenedMs = millis();
@@ -1837,7 +1890,7 @@ void runOpenDoorForUnloadStage() {
 }
 
 void runWaitDoorCloseStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (doorManualCloseRequested) {
     setCargoDoorOpen(false);
     doorManualCloseRequested = false;
@@ -1851,7 +1904,7 @@ void runWaitDoorCloseStage() {
 }
 
 void runAutoCloseDoorStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (millis() - autoStageStartedMs < 20UL) {
     setCargoDoorOpen(false);
     doorAutoClosed = true;
@@ -1862,7 +1915,7 @@ void runAutoCloseDoorStage() {
 }
 
 void runReportStatusStage() {
-  setMotionCommand(DRIVE_STOP, AUTO_DOCK_PWM, false);
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   if (millis() - autoStageStartedMs >= REPORT_STATUS_MS) {
     enterAutoStage(STAGE_DONE);
   }
@@ -1887,7 +1940,7 @@ void runMissionStateMachine() {
       setMotionCommand(DRIVE_STOP, motorPwm, false);
       break;
     case STAGE_START:
-      setMotionCommand(DRIVE_STOP, AUTO_TRAVEL_PWM, false);
+      setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_TRAVEL_PWM), false);
       if (millis() - autoStageStartedMs >= START_SETTLE_MS) {
         if (currentTask == TASK_DELIVERY_MISSION) {
           enterAutoStage(STAGE_TRAVEL_TO_DELIVERY);
