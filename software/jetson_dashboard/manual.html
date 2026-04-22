@@ -311,14 +311,77 @@
 
     let pressedDirection = null;
     let repeatTimer = null;
+    let powerSyncTimer = null;
     let lastPacket = {};
     let controlConfig = {api_path: "/api/control", default_power: 96, max_power: 255};
     let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 110, default_grip_deg: 90, step_deg: 5};
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
+    const LOCAL_PENDING_WINDOW_MS = 1500;
+    const POWER_SYNC_DEBOUNCE_MS = 120;
+    const pendingLocalState = {
+      motorPwm: {value: null, ts: 0},
+      armLiftDeg: {value: null, ts: 0},
+      armGripDeg: {value: null, ts: 0}
+    };
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
+    }
+
+    function allowedDirection(direction) {
+      const upper = String(direction || "STOP").toUpperCase();
+      return ["STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT"].includes(upper) ? upper : "STOP";
+    }
+
+    function pendingEntryActive(entry) {
+      return entry.value !== null && Date.now() - entry.ts < LOCAL_PENDING_WINDOW_MS;
+    }
+
+    function setPendingValue(key, value) {
+      pendingLocalState[key] = {value, ts: Date.now()};
+    }
+
+    function clearPendingValue(key) {
+      pendingLocalState[key] = {value: null, ts: 0};
+    }
+
+    function clearExpiredPendingValues() {
+      Object.keys(pendingLocalState).forEach((key) => {
+        if (!pendingEntryActive(pendingLocalState[key])) {
+          clearPendingValue(key);
+        }
+      });
+    }
+
+    function syncPendingValuesWithPacket(packet) {
+      if (typeof packet.motor_pwm === "number" && pendingEntryActive(pendingLocalState.motorPwm) &&
+          packet.motor_pwm === pendingLocalState.motorPwm.value) {
+        clearPendingValue("motorPwm");
+      }
+      if (typeof packet.arm_lift_deg === "number" && pendingEntryActive(pendingLocalState.armLiftDeg) &&
+          packet.arm_lift_deg === pendingLocalState.armLiftDeg.value) {
+        clearPendingValue("armLiftDeg");
+      }
+      if (typeof packet.arm_grip_deg === "number" && pendingEntryActive(pendingLocalState.armGripDeg) &&
+          packet.arm_grip_deg === pendingLocalState.armGripDeg.value) {
+        clearPendingValue("armGripDeg");
+      }
+    }
+
+    function packetWithPendingValues(packet) {
+      clearExpiredPendingValues();
+      const merged = {...(packet || {})};
+      if (pendingEntryActive(pendingLocalState.motorPwm)) {
+        merged.motor_pwm = pendingLocalState.motorPwm.value;
+      }
+      if (pendingEntryActive(pendingLocalState.armLiftDeg)) {
+        merged.arm_lift_deg = pendingLocalState.armLiftDeg.value;
+      }
+      if (pendingEntryActive(pendingLocalState.armGripDeg)) {
+        merged.arm_grip_deg = pendingLocalState.armGripDeg.value;
+      }
+      return merged;
     }
 
     function fmt(value, key) {
@@ -440,27 +503,29 @@
 
     function render(packet) {
       lastPacket = packet || {};
+      syncPendingValuesWithPacket(lastPacket);
+      const displayPacket = packetWithPendingValues(lastPacket);
       fields.forEach((key) => {
         const node = document.getElementById(key);
-        if (node) node.textContent = fmt(packet[key], key);
+        if (node) node.textContent = fmt(displayPacket[key], key);
       });
-      if (typeof packet.motor_pwm === "number" && !pressedDirection) {
-        powerSlider.value = String(packet.motor_pwm);
+      if (typeof displayPacket.motor_pwm === "number" && !pressedDirection && document.activeElement !== powerSlider) {
+        powerSlider.value = String(displayPacket.motor_pwm);
         updatePower();
       }
-      if (typeof packet.control_direction === "string" && !pressedDirection) {
-        syncDriveButtons(packet.control_direction.toUpperCase());
+      if (typeof displayPacket.control_direction === "string" && !pressedDirection) {
+        syncDriveButtons(displayPacket.control_direction.toUpperCase());
       }
-      if (typeof packet.arm_lift_deg === "number" && document.activeElement !== liftSlider) {
-        liftSlider.value = String(packet.arm_lift_deg);
+      if (typeof displayPacket.arm_lift_deg === "number" && document.activeElement !== liftSlider) {
+        liftSlider.value = String(displayPacket.arm_lift_deg);
       }
-      if (typeof packet.arm_grip_deg === "number" && document.activeElement !== gripSlider) {
-        gripSlider.value = String(packet.arm_grip_deg);
+      if (typeof displayPacket.arm_grip_deg === "number" && document.activeElement !== gripSlider) {
+        gripSlider.value = String(displayPacket.arm_grip_deg);
       }
       updateArmLabels();
       setLive("Live update: " + new Date().toLocaleTimeString());
-      syncManualInterlock(packet);
-      syncModeButtons(packet);
+      syncManualInterlock(displayPacket);
+      syncModeButtons(displayPacket);
     }
 
     async function postJson(path, payload, feedbackNode) {
@@ -489,8 +554,13 @@
         controlFeedback.textContent = "Take manual control first.";
         return;
       }
-      const payload = {direction, power: Number(powerSlider.value), source: options.source || "manual-page"};
-      await postJson(controlConfig.api_path || "/api/control", payload, controlFeedback).catch(() => {});
+      const power = Number(powerSlider.value);
+      const payload = {direction: allowedDirection(direction), power, source: options.source || "manual-page"};
+      setPendingValue("motorPwm", power);
+      await postJson(controlConfig.api_path || "/api/control", payload, options.silent ? null : controlFeedback).catch(() => {
+        clearPendingValue("motorPwm");
+        render(lastPacket);
+      });
     }
 
     async function sendArm(joint, angle, source) {
@@ -498,11 +568,23 @@
         armFeedback.textContent = "Take manual control first.";
         return;
       }
+      if (joint === "LIFT") {
+        setPendingValue("armLiftDeg", angle);
+      } else if (joint === "GRIP") {
+        setPendingValue("armGripDeg", angle);
+      }
       await postJson(
         armConfig.api_path || "/api/arm",
         {joint, angle, source: source || "manual-page"},
         armFeedback
-      ).catch(() => {});
+      ).catch(() => {
+        if (joint === "LIFT") {
+          clearPendingValue("armLiftDeg");
+        } else if (joint === "GRIP") {
+          clearPendingValue("armGripDeg");
+        }
+        render(lastPacket);
+      });
     }
 
     async function sendModeAction(action) {
@@ -518,6 +600,31 @@
         clearInterval(repeatTimer);
         repeatTimer = null;
       }
+    }
+
+    function clearPowerSyncTimer() {
+      if (powerSyncTimer) {
+        clearTimeout(powerSyncTimer);
+        powerSyncTimer = null;
+      }
+    }
+
+    function resolvePowerSyncDirection() {
+      if (pressedDirection) {
+        return pressedDirection;
+      }
+      return allowedDirection(lastPacket.control_direction || "STOP");
+    }
+
+    function schedulePowerSync() {
+      if (!manualControlsEnabled(lastPacket)) return;
+      clearPowerSyncTimer();
+      powerSyncTimer = setTimeout(() => {
+        void sendControl(resolvePowerSyncDirection(), {
+          source: "manual-page-power",
+          silent: true
+        });
+      }, POWER_SYNC_DEBOUNCE_MS);
     }
 
     function releaseDrive(options = {}) {
@@ -628,8 +735,9 @@
     emergencyStop.addEventListener("click", () => releaseDrive());
     powerSlider.addEventListener("input", () => {
       updatePower();
-      if (pressedDirection) void sendControl(pressedDirection, {source: "manual-page-slider"});
+      schedulePowerSync();
     });
+    powerSlider.addEventListener("change", () => schedulePowerSync());
     liftSlider.addEventListener("input", updateArmLabels);
     gripSlider.addEventListener("input", updateArmLabels);
     liftSlider.addEventListener("change", () => sendJoint("LIFT", "manual-page-slider"));
@@ -660,6 +768,7 @@
       if (document.hidden) releaseDrive();
     });
     window.addEventListener("beforeunload", () => {
+      clearPowerSyncTimer();
       releaseDrive({source: "manual-page-unload", skipCommand: true});
       if (manualControlsEnabled(lastPacket)) {
         void fetch(controlConfig.api_path || "/api/control", {
