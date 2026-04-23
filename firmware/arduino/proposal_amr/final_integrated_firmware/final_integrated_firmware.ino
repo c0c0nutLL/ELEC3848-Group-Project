@@ -1970,8 +1970,13 @@ void runVerifyStage(bool pickupPhase) {
   setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   bool matched = pickupPhase ? pickupRfidMatched : deliveryRfidMatched;
   if (matched && millis() - autoStageStartedMs >= VERIFY_SETTLE_MS) {
-    setStatusNote(pickupPhase ? "Pickup RFID verified" : "Delivery RFID verified");
-    enterAutoStage(pickupPhase ? STAGE_PICKUP_SEQUENCE : STAGE_WAIT_USER_UNLOCK);
+    if (pickupPhase) {
+      setStatusNote("Pickup RFID verified");
+      enterAutoStage(STAGE_PICKUP_SEQUENCE);
+    } else {
+      setStatusNote("Delivery RFID verified, opening door");
+      enterAutoStage(STAGE_OPEN_DOOR_FOR_UNLOAD);
+    }
     return;
   }
 
@@ -2418,6 +2423,13 @@ void emitTelemetry() {
 }
 
 void handleOpenDoorCommand() {
+  if (currentMode == MODE_AUTO && currentAutoStage == STAGE_VERIFY_DELIVERY_STATION) {
+    deliveryRfidMatched = true;
+    setStatusNote("Delivery verification approved by door command");
+    enterAutoStage(STAGE_OPEN_DOOR_FOR_UNLOAD);
+    return;
+  }
+
   if (currentMode == MODE_AUTO && currentAutoStage == STAGE_WAIT_USER_UNLOCK) {
     unlockApproved = true;
     setStatusNote("Jetson unlock approved");
