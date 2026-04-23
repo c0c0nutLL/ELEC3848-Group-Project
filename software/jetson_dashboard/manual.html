@@ -169,6 +169,7 @@
           <div class="card"><div class="label">Arm Status</div><div id="arm_status" class="value">--</div></div>
           <div class="card"><div class="label">Arm Lift</div><div id="arm_lift_deg" class="value">--</div></div>
           <div class="card"><div class="label">Arm Gripper</div><div id="arm_grip_deg" class="value">--</div></div>
+          <div class="card"><div class="label">Cargo Door</div><div id="cargo_door" class="value">--</div></div>
           <div class="card"><div class="label">Bridge</div><div id="bridge_status" class="value">--</div></div>
           <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
         </div>
@@ -229,6 +230,19 @@
               <p class="hint">Changing the slider updates the next drive command. The manual range is limited to 25 - 100 PWM, and if a direction is being held the new value is sent immediately.</p>
             </div>
           </section>
+
+          <section class="panel">
+            <div class="label">Cargo Door</div>
+            <h2>Door Control</h2>
+            <div class="mode-actions" style="margin-top:14px">
+              <button id="open-door" class="btn primary" type="button">Open Door</button>
+              <button id="close-door" class="btn warn" type="button">Close Door</button>
+            </div>
+            <div class="task-note" style="margin-top:14px">
+              <strong id="door-feedback-title">Door Feedback</strong>
+              <div id="door-feedback" class="sub">Use these buttons to send direct cargo-door commands from the manual page.</div>
+            </div>
+          </section>
         </div>
 
         <section class="panel">
@@ -275,7 +289,7 @@
   <script>
     const fields = [
       "current_mode","current_auto_stage","saved_auto_stage","resume_pending","task_active",
-      "control_direction","motor_pwm","arm_status","arm_lift_deg","arm_grip_deg","bridge_status","fault"
+      "control_direction","motor_pwm","arm_status","arm_lift_deg","arm_grip_deg","cargo_door","bridge_status","fault"
     ];
     const keys = {
       ArrowUp: "FORWARD",
@@ -309,9 +323,13 @@
     const liveText = document.getElementById("live-text");
     const modeFeedbackTitle = document.getElementById("mode-feedback-title");
     const modeFeedback = document.getElementById("mode-feedback");
+    const doorFeedbackTitle = document.getElementById("door-feedback-title");
+    const doorFeedback = document.getElementById("door-feedback");
     const takeManualButton = document.getElementById("take-manual");
     const resumeTaskButton = document.getElementById("resume-task");
     const abortTaskButton = document.getElementById("abort-task");
+    const openDoorButton = document.getElementById("open-door");
+    const closeDoorButton = document.getElementById("close-door");
     const powerSlider = document.getElementById("power-slider");
     const powerValue = document.getElementById("power-value");
     const controlFeedback = document.getElementById("control-feedback");
@@ -337,6 +355,7 @@
     let lastPacket = {};
     let controlConfig = {api_path: "/api/control", min_power: 25, default_power: 30, max_power: 100};
     let armConfig = {api_path: "/api/arm", min_angle_deg: 0, max_angle_deg: 180, default_lift_deg: 30, default_grip_deg: 60, step_deg: 10};
+    let doorConfig = {api_path: "/api/manual-door"};
     let modeConfig = {api_path: "/api/mode"};
     let taskConfig = {api_path: "/api/task"};
     const LOCAL_PENDING_WINDOW_MS = 1500;
@@ -528,6 +547,8 @@
       stepButtons.forEach((button) => {
         button.disabled = !manualEnabled;
       });
+      openDoorButton.disabled = !packet.bridge_status || String(packet.bridge_status) !== "CONNECTED";
+      closeDoorButton.disabled = !packet.bridge_status || String(packet.bridge_status) !== "CONNECTED";
 
       if (!manualEnabled && pressedDirection) {
         releaseDrive({skipCommand: true});
@@ -700,6 +721,15 @@
       await postJson(modeConfig.api_path || "/api/mode", {action, source: "manual-page"}, modeFeedback).catch(() => {});
     }
 
+    async function sendDoorAction(action) {
+      doorFeedbackTitle.textContent = action === "OPEN" ? "Door Open" : "Door Close";
+      await postJson(
+        doorConfig.api_path || "/api/manual-door",
+        {action, source: "manual-page"},
+        doorFeedback
+      ).catch(() => {});
+    }
+
     async function sendTaskAction(action) {
       await postJson(taskConfig.api_path || "/api/task", {action, source: "manual-page"}, modeFeedback).catch(() => {});
     }
@@ -838,6 +868,9 @@
           updateStepButtonLabels();
           updateArmLabels();
         }
+        if (config.manual_door_control) {
+          doorConfig = {...doorConfig, ...config.manual_door_control};
+        }
         if (config.mode_control) modeConfig = {...modeConfig, ...config.mode_control};
         if (config.task_control) taskConfig = {...taskConfig, ...config.task_control};
       } catch (error) {
@@ -891,6 +924,8 @@
     gripSlider.addEventListener("change", () => sendJoint("GRIP", "manual-page-slider"));
     sendLiftButton.addEventListener("click", () => sendJoint("LIFT", "manual-page-button"));
     sendGripButton.addEventListener("click", () => sendJoint("GRIP", "manual-page-button"));
+    openDoorButton.addEventListener("click", () => sendDoorAction("OPEN"));
+    closeDoorButton.addEventListener("click", () => sendDoorAction("CLOSE"));
     stepButtons.forEach((button) => {
       button.addEventListener("click", () => {
         const delta = Number(button.dataset.delta || armConfig.step_deg);

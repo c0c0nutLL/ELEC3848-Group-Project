@@ -43,6 +43,7 @@ DEFAULT_UNLOCK_CONFIG = {
 
 ALLOWED_DRIVE_DIRECTIONS = {"STOP", "FORWARD", "BACKWARD", "LEFT", "RIGHT", "TURN_LEFT", "TURN_RIGHT"}
 ALLOWED_ARM_JOINTS = {"LIFT", "GRIP"}
+ALLOWED_DOOR_ACTIONS = {"OPEN", "CLOSE"}
 ALLOWED_MODE_ACTIONS = {"TAKE_MANUAL", "RESUME_AUTO", "ABORT_TASK"}
 ALLOWED_TASK_ACTIONS = {"START", "ABORT"}
 TASK_SELECTION_TASKS = {
@@ -357,6 +358,13 @@ def normalize_task_action(raw_action: Any) -> str:
     action = str(raw_action or "").strip().upper()
     if action not in ALLOWED_TASK_ACTIONS:
         raise ValueError(f"action must be one of {sorted(ALLOWED_TASK_ACTIONS)}")
+    return action
+
+
+def normalize_door_action(raw_action: Any) -> str:
+    action = str(raw_action or "").strip().upper()
+    if action not in ALLOWED_DOOR_ACTIONS:
+        raise ValueError(f"action must be one of {sorted(ALLOWED_DOOR_ACTIONS)}")
     return action
 
 
@@ -1621,6 +1629,36 @@ def trigger_close_door(client_ip: str) -> Tuple[bool, Dict[str, Any], HTTPStatus
     )
 
 
+def trigger_manual_door_action(
+    action: Any,
+    client_ip: str,
+    source: str = "dashboard",
+) -> Tuple[bool, Dict[str, Any], HTTPStatus]:
+    try:
+        normalized_action = normalize_door_action(action)
+    except ValueError as exc:
+        return False, {"ok": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST
+
+    if normalized_action == "OPEN":
+        return trigger_door_command(
+            command=str(unlock_config.get("door_command", "OPEN_DOOR")),
+            client_ip=client_ip,
+            success_status="MANUAL_OPEN_SENT",
+            success_state_message="manual open-door command sent",
+            success_response_message="manual open-door command sent",
+            apply_cooldown=False,
+        )
+
+    return trigger_door_command(
+        command=str(unlock_config.get("close_door_command", "CLOSE_DOOR")),
+        client_ip=client_ip,
+        success_status="MANUAL_CLOSE_SENT",
+        success_state_message="manual close-door command sent",
+        success_response_message="manual close-door command sent",
+        apply_cooldown=False,
+    )
+
+
 def trigger_door_command(
     command: str,
     client_ip: str,
@@ -1847,6 +1885,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.handle_arm_post()
             return
 
+        if parsed.path == "/api/manual-door":
+            self.handle_manual_door_post()
+            return
+
         if parsed.path == "/api/mode":
             self.handle_mode_post()
             return
@@ -1967,6 +2009,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "default_lift_deg": DEFAULT_ARM_LIFT_DEG,
                 "default_grip_deg": DEFAULT_ARM_GRIP_DEG,
                 "step_deg": DEFAULT_ARM_STEP_DEG,
+                "loopback_only": False,
+                "requires_lan_password": True,
+            },
+            "manual_door_control": {
+                "api_path": "/api/manual-door",
+                "actions": sorted(ALLOWED_DOOR_ACTIONS),
+                "door_command": unlock_config.get("door_command", "OPEN_DOOR"),
+                "close_door_command": unlock_config.get("close_door_command", "CLOSE_DOOR"),
                 "loopback_only": False,
                 "requires_lan_password": True,
             },
@@ -2165,6 +2215,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         angle = data.get("angle")
         source = str(data.get("source", "dashboard"))
         ok, payload, status = trigger_arm_control(joint, angle, client_ip, source=source)
+        self.send_json(payload, status)
+
+    def handle_manual_door_post(self) -> None:
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        if not self.require_manual_access(client_ip, "manual door control"):
+            return
+
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            self.send_json({"ok": False, "message": f"invalid request: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        action = data.get("action", "")
+        source = str(data.get("source", "dashboard"))
+        ok, payload, status = trigger_manual_door_action(action, client_ip, source=source)
         self.send_json(payload, status)
 
     def handle_mode_post(self) -> None:
