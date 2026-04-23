@@ -100,6 +100,7 @@ const int AUTO_STRAFE_PWM = 45;
 const int AUTO_TURN_PWM = 45;
 const int FULL_MISSION_AUTO_PWM = 30;
 const int FULL_MISSION_TURN_PWM = 30;
+const int FULL_MISSION_FORWARD_PWM_BOOST = 5;
 const int FULL_MISSION_FORWARD_LEFT_TRIM_PWM = 3;
 
 const int DEFAULT_ARM_LIFT_DEG = 30;
@@ -596,6 +597,13 @@ int computeHeadingCorrectionPwm() {
 int activeAutoPwm(int basePwm) {
   if (currentTask == TASK_FULL_MISSION) {
     return FULL_MISSION_AUTO_PWM;
+  }
+  return basePwm;
+}
+
+int activeForwardAutoPwm(int basePwm) {
+  if (currentTask == TASK_FULL_MISSION) {
+    return constrain(basePwm + FULL_MISSION_FORWARD_PWM_BOOST, MIN_MOTOR_PWM, MAX_MOTOR_PWM);
   }
   return basePwm;
 }
@@ -1824,7 +1832,7 @@ void updateObstacleRoutine() {
       }
       break;
     case 2:
-      setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_APPROACH_PWM), true);
+      setMotionCommand(DRIVE_FORWARD, activeForwardAutoPwm(AUTO_APPROACH_PWM), true);
       if (elapsedMs >= OBSTACLE_PASS_MS) {
         advanceObstacleRoutine();
       }
@@ -1904,14 +1912,14 @@ void runTravelStage(bool pickupPhase) {
   }
 
   if (latestAverageCm > APPROACH_TO_DOCK_CM) {
-    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_TRAVEL_PWM), false);
+    setMotionCommand(DRIVE_FORWARD, activeForwardAutoPwm(AUTO_TRAVEL_PWM), false);
     setStatusNote(pickupPhase ? "Traveling to pickup RFID" : "Traveling to delivery RFID");
     dockStableStartedMs = 0;
     return;
   }
 
   if (latestAverageCm > DOCK_TARGET_CM + DOCK_DISTANCE_TOLERANCE_CM) {
-    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_APPROACH_PWM), false);
+    setMotionCommand(DRIVE_FORWARD, activeForwardAutoPwm(AUTO_APPROACH_PWM), false);
     setStatusNote(pickupPhase ? "Approaching pickup dock" : "Approaching delivery dock");
     dockStableStartedMs = 0;
     return;
@@ -1948,14 +1956,14 @@ void runDeliveryStraightStage() {
   }
 
   if (latestAverageCm > APPROACH_TO_DOCK_CM) {
-    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_TRAVEL_PWM), false);
+    setMotionCommand(DRIVE_FORWARD, activeForwardAutoPwm(AUTO_TRAVEL_PWM), false);
     setStatusNote("Traveling to delivery station");
     dockStableStartedMs = 0;
     return;
   }
 
   if (latestAverageCm > DOCK_TARGET_CM + DOCK_DISTANCE_TOLERANCE_CM) {
-    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_APPROACH_PWM), false);
+    setMotionCommand(DRIVE_FORWARD, activeForwardAutoPwm(AUTO_APPROACH_PWM), false);
     setStatusNote("Approaching delivery target distance");
     dockStableStartedMs = 0;
     return;
