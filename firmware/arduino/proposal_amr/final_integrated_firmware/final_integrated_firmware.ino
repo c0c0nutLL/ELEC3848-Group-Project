@@ -71,11 +71,15 @@ const unsigned long ULTRASONIC_TIMEOUT_US = 30000UL;
 const unsigned long RFID_POLL_INTERVAL_MS = 120UL;
 const unsigned long START_SETTLE_MS = 300UL;
 const unsigned long VERIFY_SETTLE_MS = 300UL;
-const unsigned long VERIFY_TIMEOUT_MS = 8000UL;
-const unsigned long DOCK_STABLE_MS = 450UL;
+const unsigned long VERIFY_TIMEOUT_MS = 15000UL;
+const unsigned long DOCK_LEFT_SHIFT_MS = 3000UL;
+const unsigned long DOCK_CENTER_STOP_MS = 1000UL;
+const unsigned long DOCK_RIGHT_SHIFT_MS = 5000UL;
 const unsigned long ARM_STEP_WAIT_MS = 550UL;
 const unsigned long PICKUP_MISSION_ARM_STEP_WAIT_MS = (ARM_STEP_WAIT_MS * 3UL) / 2UL;
-const unsigned long DOOR_SETTLE_MS = 900UL;
+const unsigned long DOOR_SERVO_STEP_INTERVAL_MS = 3UL;
+const unsigned long DOOR_MOTION_SETTLE_MS = 120UL;
+const int DOOR_SERVO_STEP_DEG = 1;
 const unsigned long LOAD_SETTLE_MS = 2500UL;
 const unsigned long TURN_AROUND_MS = 720UL;
 const unsigned long REPORT_STATUS_MS = 800UL;
@@ -100,13 +104,19 @@ const int FULL_MISSION_FORWARD_LEFT_TRIM_PWM = 3;
 const int DEFAULT_ARM_LIFT_DEG = 30;
 const int DEFAULT_ARM_GRIP_DEG = 60;
 const int PICKUP_LIFT_GRAB_DEG = 0;
-const int PICKUP_GRIP_HOLD_DEG = 40;
-const int LOAD_LIFT_PLACE_DEG = 140;
-const int LOAD_GRIP_RELEASE_DEG = 90;
-const int CARGO_DOOR_OPEN_DEG = 108;
-const int CARGO_DOOR_CLOSED_DEG = 18;
+const int PICKUP_GRIP_HOLD_DEG = 90;
+const int LOAD_LIFT_PLACE_REPORTED_DEG = 170;
+const int LOAD_GRIP_RELEASE_DEG = 40;
+const int CARGO_DOOR_OPEN_DEG = 0;
+const int CARGO_DOOR_CLOSED_DEG = 130;
 const int MIN_ARM_DEG = 0;
 const int MAX_ARM_DEG = 180;
+const int ARM_LIFT_MIN_US = 500;
+const int ARM_LIFT_MAX_US = 2500;
+const int ARM_LIFT_BACK_US = 2000;
+const int ARM_LIFT_US_STEP = 10;
+const unsigned long ARM_LIFT_US_STEP_INTERVAL_MS = 15UL;
+const unsigned long ARM_LIFT_US_SETTLE_MS = 120UL;
 
 const float GYRO_SCALE_DPS_PER_LSB = 131.0f;
 const float HEADING_HOLD_KP = 2.2f;
@@ -254,6 +264,7 @@ unsigned long lastArmCommandMs = 0;
 unsigned long lastRfidPollMs = 0;
 unsigned long autoStageStartedMs = 0;
 unsigned long dockStableStartedMs = 0;
+unsigned long dockManeuverStartedMs = 0;
 unsigned long armStepStartedMs = 0;
 unsigned long unloadDoorOpenedMs = 0;
 unsigned long obstacleStepStartedMs = 0;
@@ -283,14 +294,19 @@ bool greenLedOn = false;
 
 uint8_t invalidDistanceCount = 0;
 uint8_t gyroReadFailCount = 0;
+uint8_t dockManeuverStep = 0;
 uint8_t pickupSequenceStep = 0;
 uint8_t obstacleRoutineStep = 0;
 
 int motorPwm = DEFAULT_MOTOR_PWM;
 int currentArmLiftDeg = DEFAULT_ARM_LIFT_DEG;
 int currentArmGripDeg = DEFAULT_ARM_GRIP_DEG;
+int currentArmLiftUs = ARM_LIFT_MIN_US;
+int armLiftTargetUs = ARM_LIFT_MIN_US;
 int currentWheelPwm[MOTOR_COUNT] = {0, 0, 0, 0};
 int lastHeadingCorrectionPwm = 0;
+int cargoDoorCurrentDeg = CARGO_DOOR_CLOSED_DEG;
+int cargoDoorTargetDeg = CARGO_DOOR_CLOSED_DEG;
 
 DistanceSnapshot latestDistances = {-1.0f, -1.0f};
 float latestAverageCm = -1.0f;
@@ -299,6 +315,13 @@ float gyroZBias = 0.0f;
 float latestGyroZDps = 0.0f;
 float headingDeg = 0.0f;
 float headingTargetDeg = 0.0f;
+float turnAroundStartHeadingDeg = 0.0f;
+
+unsigned long lastCargoDoorStepMs = 0;
+unsigned long cargoDoorReachedTargetMs = 0;
+unsigned long lastArmLiftUsStepMs = 0;
+unsigned long armLiftUsReachedTargetMs = 0;
+bool armLiftUsMotionActive = false;
 
 Servo armLiftServo;
 Servo armGripServo;
@@ -670,16 +693,89 @@ void setupTaskStatusLeds() {
   greenLedOn = false;
 }
 
+int armLiftAngleToUs(int angle) {
+  int constrainedAngle = constrain(angle, MIN_ARM_DEG, MAX_ARM_DEG);
+  long spanUs = static_cast<long>(ARM_LIFT_MAX_US - ARM_LIFT_MIN_US);
+  return ARM_LIFT_MIN_US + static_cast<int>((spanUs * constrainedAngle) / MAX_ARM_DEG);
+}
+
 void applyArmCommandInternal(const char *joint, int requestedDeg) {
   int angle = constrain(requestedDeg, MIN_ARM_DEG, MAX_ARM_DEG);
   if (strcmp(joint, "LIFT") == 0) {
     currentArmLiftDeg = angle;
+    currentArmLiftUs = armLiftAngleToUs(angle);
+    armLiftTargetUs = currentArmLiftUs;
+    armLiftUsMotionActive = false;
+    lastArmLiftUsStepMs = millis();
+    armLiftUsReachedTargetMs = lastArmLiftUsStepMs;
     armLiftServo.write(currentArmLiftDeg);
   } else {
     currentArmGripDeg = angle;
     armGripServo.write(currentArmGripDeg);
   }
   lastArmCommandMs = millis();
+}
+
+void applyArmLiftMicrosecondsInternal(int requestedUs, int reportedDeg) {
+  int pulseUs = constrain(requestedUs, ARM_LIFT_MIN_US, ARM_LIFT_MAX_US);
+  currentArmLiftDeg = constrain(reportedDeg, MIN_ARM_DEG, MAX_ARM_DEG);
+  currentArmLiftUs = pulseUs;
+  armLiftTargetUs = pulseUs;
+  armLiftUsMotionActive = false;
+  lastArmLiftUsStepMs = millis();
+  armLiftUsReachedTargetMs = lastArmLiftUsStepMs;
+  armLiftServo.writeMicroseconds(pulseUs);
+  lastArmCommandMs = millis();
+}
+
+void startArmLiftMicrosecondsMotion(int requestedUs, int reportedDeg) {
+  armLiftTargetUs = constrain(requestedUs, ARM_LIFT_MIN_US, ARM_LIFT_MAX_US);
+  currentArmLiftDeg = constrain(reportedDeg, MIN_ARM_DEG, MAX_ARM_DEG);
+  armLiftUsMotionActive = true;
+  armLiftUsReachedTargetMs = 0;
+  lastArmLiftUsStepMs = millis();
+  lastArmCommandMs = lastArmLiftUsStepMs;
+}
+
+void updateArmLiftMicrosecondsMotion() {
+  if (!armLiftUsMotionActive) {
+    return;
+  }
+
+  if (currentArmLiftUs == armLiftTargetUs) {
+    armLiftUsMotionActive = false;
+    if (armLiftUsReachedTargetMs == 0) {
+      armLiftUsReachedTargetMs = millis();
+    }
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastArmLiftUsStepMs < ARM_LIFT_US_STEP_INTERVAL_MS) {
+    return;
+  }
+
+  int stepUs = ARM_LIFT_US_STEP;
+  if (abs(armLiftTargetUs - currentArmLiftUs) < stepUs) {
+    stepUs = abs(armLiftTargetUs - currentArmLiftUs);
+  }
+
+  currentArmLiftUs += (armLiftTargetUs > currentArmLiftUs) ? stepUs : -stepUs;
+  armLiftServo.writeMicroseconds(currentArmLiftUs);
+  lastArmLiftUsStepMs = nowMs;
+  lastArmCommandMs = nowMs;
+
+  if (currentArmLiftUs == armLiftTargetUs) {
+    armLiftUsMotionActive = false;
+    armLiftUsReachedTargetMs = nowMs;
+  }
+}
+
+bool armLiftMicrosecondsMotionSettled() {
+  return !armLiftUsMotionActive &&
+         currentArmLiftUs == armLiftTargetUs &&
+         armLiftUsReachedTargetMs > 0 &&
+         millis() - armLiftUsReachedTargetMs >= ARM_LIFT_US_SETTLE_MS;
 }
 
 void setupArm() {
@@ -689,14 +785,63 @@ void setupArm() {
   applyArmCommandInternal("GRIP", DEFAULT_ARM_GRIP_DEG);
 }
 
+void setCargoDoorAngleImmediate(int angle) {
+  int constrainedAngle = constrain(angle, MIN_ARM_DEG, MAX_ARM_DEG);
+  cargoDoorCurrentDeg = constrainedAngle;
+  cargoDoorTargetDeg = constrainedAngle;
+  cargoDoorServo.write(constrainedAngle);
+  lastCargoDoorStepMs = millis();
+  cargoDoorReachedTargetMs = lastCargoDoorStepMs;
+}
+
 void setCargoDoorOpen(bool openDoor) {
+  int targetDeg = openDoor ? CARGO_DOOR_OPEN_DEG : CARGO_DOOR_CLOSED_DEG;
+  if (cargoDoorOpen == openDoor && cargoDoorTargetDeg == targetDeg) {
+    return;
+  }
+
   cargoDoorOpen = openDoor;
-  cargoDoorServo.write(openDoor ? CARGO_DOOR_OPEN_DEG : CARGO_DOOR_CLOSED_DEG);
+  cargoDoorTargetDeg = targetDeg;
+  cargoDoorReachedTargetMs = 0;
+}
+
+void updateCargoDoorMotion() {
+  if (cargoDoorCurrentDeg == cargoDoorTargetDeg) {
+    if (cargoDoorReachedTargetMs == 0) {
+      cargoDoorReachedTargetMs = millis();
+    }
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  if (nowMs - lastCargoDoorStepMs < DOOR_SERVO_STEP_INTERVAL_MS) {
+    return;
+  }
+
+  int stepDeg = DOOR_SERVO_STEP_DEG;
+  if (abs(cargoDoorTargetDeg - cargoDoorCurrentDeg) < stepDeg) {
+    stepDeg = abs(cargoDoorTargetDeg - cargoDoorCurrentDeg);
+  }
+
+  cargoDoorCurrentDeg += (cargoDoorTargetDeg > cargoDoorCurrentDeg) ? stepDeg : -stepDeg;
+  cargoDoorServo.write(cargoDoorCurrentDeg);
+  lastCargoDoorStepMs = nowMs;
+
+  if (cargoDoorCurrentDeg == cargoDoorTargetDeg) {
+    cargoDoorReachedTargetMs = nowMs;
+  }
+}
+
+bool cargoDoorMotionSettled() {
+  return cargoDoorCurrentDeg == cargoDoorTargetDeg &&
+         cargoDoorReachedTargetMs > 0 &&
+         millis() - cargoDoorReachedTargetMs >= DOOR_MOTION_SETTLE_MS;
 }
 
 void setupCargoDoorServo() {
   cargoDoorServo.attach(CARGO_DOOR_SERVO_PIN);
-  setCargoDoorOpen(false);
+  setCargoDoorAngleImmediate(CARGO_DOOR_CLOSED_DEG);
+  cargoDoorOpen = false;
 }
 
 void writeMpuRegister(uint8_t reg, uint8_t value) {
@@ -1264,6 +1409,8 @@ AutoStage safeResumeStageFor(AutoStage stage) {
 void resetStageLocalState() {
   invalidDistanceCount = 0;
   dockStableStartedMs = 0;
+  dockManeuverStartedMs = 0;
+  dockManeuverStep = 0;
   pickupSequenceStep = 0;
   armStepStartedMs = 0;
   unlockApproved = false;
@@ -1337,6 +1484,7 @@ void enterAutoStage(AutoStage stage) {
       manualSessionActive = false;
       taskActive = true;
       if (mpuReady && currentTask == TASK_FULL_MISSION) {
+        turnAroundStartHeadingDeg = headingDeg;
         headingTargetDeg = headingDeg + 180.0f;
       }
       setStatusNote("Turning around");
@@ -1706,13 +1854,49 @@ void runTravelStage(bool pickupPhase) {
     return;
   }
 
+  if (dockManeuverStep != 0) {
+    unsigned long elapsedMs = millis() - dockManeuverStartedMs;
+
+    switch (dockManeuverStep) {
+      case 1:
+        setMotionCommand(DRIVE_LEFT, activeAutoPwm(AUTO_STRAFE_PWM), false);
+        setStatusNote(pickupPhase ? "Pickup dock left shift" : "Delivery dock left shift");
+        if (elapsedMs >= DOCK_LEFT_SHIFT_MS) {
+          dockManeuverStep = 2;
+          dockManeuverStartedMs = millis();
+        }
+        return;
+      case 2:
+        setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
+        setStatusNote(pickupPhase ? "Pickup dock center stop" : "Delivery dock center stop");
+        if (elapsedMs >= DOCK_CENTER_STOP_MS) {
+          dockManeuverStep = 3;
+          dockManeuverStartedMs = millis();
+        }
+        return;
+      case 3:
+        setMotionCommand(DRIVE_RIGHT, activeAutoPwm(AUTO_STRAFE_PWM), false);
+        setStatusNote(pickupPhase ? "Pickup dock right shift" : "Delivery dock right shift");
+        if (elapsedMs >= DOCK_RIGHT_SHIFT_MS) {
+          dockManeuverStep = 4;
+          dockManeuverStartedMs = millis();
+        }
+        return;
+      default:
+        setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
+        setStatusNote(pickupPhase ? "Pickup dock maneuver complete" : "Delivery dock maneuver complete");
+        enterAutoStage(pickupPhase ? STAGE_VERIFY_PICKUP_STATION : STAGE_VERIFY_DELIVERY_STATION);
+        return;
+    }
+  }
+
   if (fabs(latestDiffCm) > DOCK_ALIGN_TOLERANCE_CM && latestAverageCm <= APPROACH_TO_DOCK_CM) {
     if (latestDiffCm > 0.0f) {
-      setMotionCommand(DRIVE_RIGHT, activeAutoPwm(AUTO_STRAFE_PWM), false);
-      setStatusNote(pickupPhase ? "Pickup align strafing right" : "Delivery align strafing right");
+      setMotionCommand(DRIVE_TURN_LEFT, activeAutoPwm(AUTO_TURN_PWM), false);
+      setStatusNote(pickupPhase ? "Pickup align turning left" : "Delivery align turning left");
     } else {
-      setMotionCommand(DRIVE_LEFT, activeAutoPwm(AUTO_STRAFE_PWM), false);
-      setStatusNote(pickupPhase ? "Pickup align strafing left" : "Delivery align strafing left");
+      setMotionCommand(DRIVE_TURN_RIGHT, activeAutoPwm(AUTO_TURN_PWM), false);
+      setStatusNote(pickupPhase ? "Pickup align turning right" : "Delivery align turning right");
     }
     dockStableStartedMs = 0;
     return;
@@ -1739,16 +1923,10 @@ void runTravelStage(bool pickupPhase) {
     return;
   }
 
-  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
-  if (dockStableStartedMs == 0) {
-    dockStableStartedMs = millis();
-    setStatusNote(pickupPhase ? "Holding at pickup dock" : "Holding at delivery dock");
-    return;
-  }
-
-  if (millis() - dockStableStartedMs >= DOCK_STABLE_MS) {
-    enterAutoStage(pickupPhase ? STAGE_VERIFY_PICKUP_STATION : STAGE_VERIFY_DELIVERY_STATION);
-  }
+  dockManeuverStep = 1;
+  dockManeuverStartedMs = millis();
+  setMotionCommand(DRIVE_LEFT, activeAutoPwm(AUTO_STRAFE_PWM), false);
+  setStatusNote(pickupPhase ? "Pickup dock maneuver start" : "Delivery dock maneuver start");
 }
 
 void runVerifyStage(bool pickupPhase) {
@@ -1771,13 +1949,13 @@ void runPickupSequenceStage() {
 
   switch (pickupSequenceStep) {
     case 0:
-      applyArmCommandInternal("GRIP", PICKUP_GRIP_HOLD_DEG);
+      applyArmCommandInternal("LIFT", PICKUP_LIFT_GRAB_DEG);
       armStepStartedMs = millis();
       pickupSequenceStep = 1;
       break;
     case 1:
       if (millis() - armStepStartedMs >= armWaitMs) {
-        applyArmCommandInternal("LIFT", PICKUP_LIFT_GRAB_DEG);
+        applyArmCommandInternal("GRIP", PICKUP_GRIP_HOLD_DEG);
         armStepStartedMs = millis();
         pickupSequenceStep = 2;
       }
@@ -1795,7 +1973,7 @@ void runOpenDoorForLoadStage() {
   if (millis() - autoStageStartedMs < 20UL) {
     setCargoDoorOpen(true);
   }
-  if (millis() - autoStageStartedMs >= DOOR_SETTLE_MS) {
+  if (cargoDoorMotionSettled()) {
     enterAutoStage(STAGE_LOAD_CARGO);
   }
 }
@@ -1806,13 +1984,13 @@ void runLoadCargoStage() {
 
   switch (pickupSequenceStep) {
     case 0:
-      applyArmCommandInternal("GRIP", LOAD_GRIP_RELEASE_DEG);
-      armStepStartedMs = millis();
+      startArmLiftMicrosecondsMotion(ARM_LIFT_BACK_US, LOAD_LIFT_PLACE_REPORTED_DEG);
+      armStepStartedMs = 0;
       pickupSequenceStep = 1;
       break;
     case 1:
-      if (millis() - armStepStartedMs >= armWaitMs) {
-        applyArmCommandInternal("LIFT", LOAD_LIFT_PLACE_DEG);
+      if (armLiftMicrosecondsMotionSettled()) {
+        applyArmCommandInternal("GRIP", LOAD_GRIP_RELEASE_DEG);
         armStepStartedMs = millis();
         pickupSequenceStep = 2;
       }
@@ -1838,7 +2016,7 @@ void runCloseDoorAfterLoadStage() {
   if (millis() - autoStageStartedMs < 20UL) {
     setCargoDoorOpen(false);
   }
-  if (millis() - autoStageStartedMs >= DOOR_SETTLE_MS) {
+  if (cargoDoorMotionSettled()) {
     if (currentTask == TASK_PICKUP_MISSION) {
       enterAutoStage(STAGE_REPORT_STATUS);
     } else {
@@ -1849,15 +2027,14 @@ void runCloseDoorAfterLoadStage() {
 
 void runTurnAroundStage() {
   if (currentTask == TASK_FULL_MISSION && mpuReady) {
-    float headingErrorDeg = headingTargetDeg - headingDeg;
-    if (fabs(headingErrorDeg) <= TURN_AROUND_TOLERANCE_DEG) {
+    float headingDeltaDeg = fabs(headingDeg - turnAroundStartHeadingDeg);
+    if (headingDeltaDeg >= 180.0f - TURN_AROUND_TOLERANCE_DEG) {
       setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
       enterAutoStage(STAGE_TRAVEL_TO_DELIVERY);
       return;
     }
 
-    DriveDirection turnDirection = headingErrorDeg > 0.0f ? DRIVE_TURN_RIGHT : DRIVE_TURN_LEFT;
-    setMotionCommand(turnDirection, activeTurnAroundPwm(), false);
+    setMotionCommand(DRIVE_TURN_RIGHT, activeTurnAroundPwm(), false);
     return;
   }
 
@@ -1884,7 +2061,7 @@ void runOpenDoorForUnloadStage() {
     doorManualCloseRequested = false;
     doorAutoClosed = false;
   }
-  if (millis() - autoStageStartedMs >= DOOR_SETTLE_MS) {
+  if (cargoDoorMotionSettled()) {
     enterAutoStage(STAGE_WAIT_DOOR_CLOSE);
   }
 }
@@ -1894,6 +2071,9 @@ void runWaitDoorCloseStage() {
   if (doorManualCloseRequested) {
     setCargoDoorOpen(false);
     doorManualCloseRequested = false;
+  }
+
+  if (!cargoDoorOpen && cargoDoorMotionSettled()) {
     enterAutoStage(STAGE_REPORT_STATUS);
     return;
   }
@@ -1909,7 +2089,7 @@ void runAutoCloseDoorStage() {
     setCargoDoorOpen(false);
     doorAutoClosed = true;
   }
-  if (millis() - autoStageStartedMs >= DOOR_SETTLE_MS) {
+  if (cargoDoorMotionSettled()) {
     enterAutoStage(STAGE_REPORT_STATUS);
   }
 }
@@ -1926,14 +2106,15 @@ void runMissionStateMachine() {
     return;
   }
 
-  if (shouldStartObstacleRoutine()) {
-    startObstacleRoutine();
-  }
-
-  if (obstacleRoutineActive) {
-    updateObstacleRoutine();
-    return;
-  }
+  // Obstacle routine is temporarily disabled so travel stages remain pure straight-line travel.
+  // if (shouldStartObstacleRoutine()) {
+  //   startObstacleRoutine();
+  // }
+  //
+  // if (obstacleRoutineActive) {
+  //   updateObstacleRoutine();
+  //   return;
+  // }
 
   switch (currentAutoStage) {
     case STAGE_IDLE:
@@ -2484,7 +2665,9 @@ void loop() {
   pollSerialCommands();
   updateDistanceSnapshot();
   updateRfidReader();
+  updateArmLiftMicrosecondsMotion();
   runMissionStateMachine();
+  updateCargoDoorMotion();
   updateDriveFailsafe();
   driveCurrentDirection();
   updateTaskStatusLeds();
