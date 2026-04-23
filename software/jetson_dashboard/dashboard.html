@@ -311,6 +311,10 @@
             <div class="card"><div class="label">RFID Tag</div><div id="rfid_tag" class="value small">--</div></div>
             <div class="card"><div class="label">RFID Match</div><div id="rfid_match" class="value">--</div></div>
             <div class="card"><div class="label">Fault</div><div id="fault" class="value small">--</div></div>
+            <div class="card"><div class="label">YOLO Status</div><div id="yolo_status" class="value small">--</div></div>
+            <div class="card"><div class="label">YOLO Objects</div><div id="yolo_classes" class="value small">--</div></div>
+            <div class="card"><div class="label">YOLO Counts</div><div id="yolo_class_counts" class="value small">--</div></div>
+            <div class="card"><div class="label">Person Center</div><div id="yolo_person_center" class="value small">--</div></div>
           </div>
         </section>
 
@@ -486,7 +490,8 @@
       "state","current_mode","current_auto_stage","saved_auto_stage","resume_pending","task_active","resume_note",
       "control_direction","motor_pwm","control_status","arm_lift_deg","arm_grip_deg","arm_status",
       "delivery_result","target_station","cargo_door","bridge_status","right_cm","left_cm","avg_cm",
-      "diff_cm","heading_deg","rfid_tag","rfid_match","fault"
+      "diff_cm","heading_deg","rfid_tag","rfid_match","fault",
+      "yolo_status","yolo_classes","yolo_class_counts","yolo_person_center"
     ];
     const keys = {
       ArrowUp: "FORWARD",
@@ -761,6 +766,17 @@
     function fmt(value, key) {
       if (value === undefined || value === null || value === "") return "--";
       if (typeof value === "number" && !Number.isFinite(value)) return "--";
+      if (key === "yolo_classes" && Array.isArray(value)) return value.length ? value.join(", ") : "none";
+      if (key === "yolo_class_counts" && typeof value === "object") {
+        const entries = Object.entries(value);
+        return entries.length ? entries.map(([name, count]) => `${name} x${count}`).join(", ") : "none";
+      }
+      if (key === "yolo_person_center" && typeof value === "object") {
+        const x = Number(value.x);
+        const y = Number(value.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return "--";
+        return `(${Math.round(x)}, ${Math.round(y)})`;
+      }
       if (typeof value === "number" && key.endsWith("_cm")) return value.toFixed(1) + " cm";
       if (typeof value === "number" && (key === "heading_deg" || key === "arm_lift_deg" || key === "arm_grip_deg")) return Math.round(value) + " deg";
       if (typeof value === "number" && key === "motor_pwm") return value + " / " + powerSlider.max;

@@ -49,6 +49,13 @@ Current observations:
   - Show annotated detections in real time
   - Display FPS in the top-left corner
 
+- `../jetson_dashboard/server_yolo_test.py`
+  - integration test server that keeps the dashboard / HTTP / serial service running
+  - reuses the same CSI camera open path and YOLO predict flow as `camera_detection_test.py`
+  - does not call `imshow`
+  - does not draw or save bounding-box images
+  - exposes detection state through HTTP instead of a local display window
+
 ## Example Commands
 
 Single image:
@@ -77,3 +84,43 @@ If you later export TensorRT, the same scripts can also use:
 ```bash
 --model /path/to/best.engine
 ```
+
+## Integrated UI + YOLO Test
+
+For the current dashboard integration test, use:
+
+```bash
+python3 software/jetson_dashboard/server_yolo_test.py \
+  --serial /dev/ttyUSB0 \
+  --http-port 8080 \
+  --yolo-camera /dev/video0 \
+  --yolo-model yolo11n.pt
+```
+
+What it does:
+
+- keeps the existing dashboard / UI and HTTP service available
+- keeps the serial bridge structure from `software/jetson_dashboard/server.py`
+- runs background camera YOLO detection in parallel
+- exposes YOLO state from `GET /api/yolo/state`
+
+The integrated test currently reports status such as:
+
+- whether YOLO is enabled
+- whether the runtime and model loaded successfully
+- whether the camera is open
+- whether anything was detected
+- whether `person` was detected
+- latest detected class list
+- detection count
+- top-confidence class and score
+- latest update timestamp
+- current error message, if any
+
+Important constraints for this integrated path:
+
+- no display is required
+- no `imshow`
+- no bounding-box rendering
+- it is still expected to run inside the working Jetson Docker YOLO environment, or another equivalent runtime with OpenCV + Ultralytics available
+- if the runtime is not available on the host Python environment, the HTTP server should still stay up and report the failure through the YOLO state API

@@ -72,6 +72,7 @@ const unsigned long RFID_POLL_INTERVAL_MS = 120UL;
 const unsigned long START_SETTLE_MS = 300UL;
 const unsigned long VERIFY_SETTLE_MS = 300UL;
 const unsigned long VERIFY_TIMEOUT_MS = 15000UL;
+const unsigned long DELIVERY_VERIFY_TIMEOUT_MS = 60000UL;
 const unsigned long DOCK_LEFT_SHIFT_MS = 3000UL;
 const unsigned long DOCK_CENTER_STOP_MS = 1000UL;
 const unsigned long DOCK_RIGHT_SHIFT_MS = 5000UL;
@@ -1929,6 +1930,42 @@ void runTravelStage(bool pickupPhase) {
   setStatusNote(pickupPhase ? "Pickup dock maneuver start" : "Delivery dock maneuver start");
 }
 
+void runDeliveryStraightStage() {
+  if (!requireFrontDistance("Front distance invalid during delivery travel")) {
+    return;
+  }
+
+  if (fabs(latestDiffCm) > DOCK_ALIGN_TOLERANCE_CM && latestAverageCm <= APPROACH_TO_DOCK_CM) {
+    if (latestDiffCm > 0.0f) {
+      setMotionCommand(DRIVE_TURN_LEFT, activeAutoPwm(AUTO_TURN_PWM), false);
+      setStatusNote("Delivery align turning left");
+    } else {
+      setMotionCommand(DRIVE_TURN_RIGHT, activeAutoPwm(AUTO_TURN_PWM), false);
+      setStatusNote("Delivery align turning right");
+    }
+    dockStableStartedMs = 0;
+    return;
+  }
+
+  if (latestAverageCm > APPROACH_TO_DOCK_CM) {
+    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_TRAVEL_PWM), false);
+    setStatusNote("Traveling to delivery station");
+    dockStableStartedMs = 0;
+    return;
+  }
+
+  if (latestAverageCm > DOCK_TARGET_CM + DOCK_DISTANCE_TOLERANCE_CM) {
+    setMotionCommand(DRIVE_FORWARD, activeAutoPwm(AUTO_APPROACH_PWM), false);
+    setStatusNote("Approaching delivery target distance");
+    dockStableStartedMs = 0;
+    return;
+  }
+
+  setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
+  setStatusNote("Delivery target distance reached, waiting RFID");
+  enterAutoStage(STAGE_VERIFY_DELIVERY_STATION);
+}
+
 void runVerifyStage(bool pickupPhase) {
   setMotionCommand(DRIVE_STOP, activeAutoPwm(AUTO_DOCK_PWM), false);
   bool matched = pickupPhase ? pickupRfidMatched : deliveryRfidMatched;
@@ -1938,7 +1975,8 @@ void runVerifyStage(bool pickupPhase) {
     return;
   }
 
-  if (millis() - autoStageStartedMs >= VERIFY_TIMEOUT_MS) {
+  unsigned long verifyTimeoutMs = pickupPhase ? VERIFY_TIMEOUT_MS : DELIVERY_VERIFY_TIMEOUT_MS;
+  if (millis() - autoStageStartedMs >= verifyTimeoutMs) {
     enterFault(pickupPhase ? "Pickup RFID verify timeout" : "Delivery RFID verify timeout");
   }
 }
@@ -2152,7 +2190,7 @@ void runMissionStateMachine() {
       runTurnAroundStage();
       break;
     case STAGE_TRAVEL_TO_DELIVERY:
-      runTravelStage(false);
+      runDeliveryStraightStage();
       break;
     case STAGE_VERIFY_DELIVERY_STATION:
       runVerifyStage(false);

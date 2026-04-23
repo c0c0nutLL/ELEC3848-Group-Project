@@ -19,6 +19,10 @@ Jetson is not the mission source of truth. Arduino owns task, mode, stage, door,
   - main Jetson service
   - reads Arduino JSON telemetry
   - exposes task, mode, control, arm, unlock, and task-selection APIs
+- `server_yolo_test.py`
+  - integration-test variant of `server.py`
+  - keeps the same UI / HTTP / serial bridge base
+  - adds a background YOLO camera detection loop and `GET /api/yolo/state`
 - `tasks.html`
   - real task-selection page
   - starts and aborts canonical Arduino tasks
@@ -168,3 +172,65 @@ Arduino does not implement the web password flow. It only reacts to the door com
 ## Mock Mode
 
 `--mock` is still supported for UI bring-up and server testing. In real serial mode, task pages and status pages are expected to follow Arduino telemetry.
+
+## YOLO Integration Test Server
+
+`server_yolo_test.py` is the current test-only integration path for running:
+
+- the existing dashboard / UI pages
+- the existing HTTP APIs and serial bridge
+- a background YOLO camera worker in the same process
+
+This file is intentionally separate from `server.py`.
+It is for validating `UI + YOLO` concurrency first, without changing the main Jetson service entry point yet.
+
+Current behavior:
+
+- no `cv2.imshow`
+- no local GUI dependency
+- no rendered bounding boxes
+- only detection state is kept and exposed
+
+Primary YOLO status API:
+
+- `GET /api/yolo/state`
+
+The same run also mirrors a flat YOLO summary into the normal `/api/state` payload with keys such as:
+
+- `yolo_status`
+- `yolo_camera_ok`
+- `yolo_detected`
+- `yolo_person_detected`
+- `yolo_classes`
+- `yolo_count`
+- `yolo_top_class`
+- `yolo_top_score`
+- `yolo_last_update_ms`
+- `yolo_error_message`
+
+Example launch:
+
+```bash
+python3 software/jetson_dashboard/server_yolo_test.py \
+  --serial /dev/ttyUSB0 \
+  --http-port 8080 \
+  --yolo-camera /dev/video0 \
+  --yolo-model yolo11n.pt
+```
+
+Useful options:
+
+- `--mock`
+  - keep the UI/serial side in mock mode while still exercising the YOLO worker
+- `--disable-yolo`
+  - start the integrated test server without the YOLO thread
+- `--yolo-device cuda:0`
+  - optionally pin YOLO to a specific runtime device
+- `--yolo-retry-ms 2000`
+  - retry interval after camera open/read failures
+
+Environment note:
+
+- this file reuses the dashboard Python path, but it does not add YOLO packages to `requirements.txt`
+- the intended runtime is still the current Jetson Docker YOLO workflow, or another Python environment where `opencv-python` and `ultralytics` are already available
+- if the runtime is missing, the server should still stay up and `/api/yolo/state` will report an error status instead of crashing the whole service
